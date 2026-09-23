@@ -13,15 +13,20 @@ export const TurnRecordSchema = z.object({
   startedAt: z.string().nullable(),
   endedAt: z.string(),
   durationMs: z.number().nullable(),
-  status: z.enum(["completed", "failed", "canceled"]),
+  status: z.enum(["completed", "failed", "canceled", "unknown"]),
+  /** A subscription gap may have hidden requests or the terminal outcome. */
+  usageGap: z.boolean().optional(),
   /**
    * Turn token totals. On disk these are exactly as reported upstream (some
    * providers count cache reads inside input — see semantics.ts); rows served
-   * over RPC are normalized so input is always fresh uncached tokens.
+   * over RPC normalize verified inclusive providers to ordinary input, with
+   * cache reads and known cache writes separate. Unknown semantics pass through.
    * Null when the provider reported nothing.
    */
   input: z.number().nullable(),
   cached: z.number().nullable(),
+  /** Cache creation tokens, when reported; absent in historical/Paseo 0.8 usage. */
+  cacheWrite: z.number().finite().nonnegative().nullable().optional(),
   output: z.number().nullable(),
   /** Cost attributed to this turn (delta of a cumulative session cost when detected). */
   costUsd: z.number().nullable(),
@@ -32,6 +37,7 @@ export const TurnRecordSchema = z.object({
   /** Raw per-request observations, when the harness contract is verified. */
   requests: z.array(z.object({
     input: z.number().nullable(), cached: z.number().nullable(), output: z.number().nullable(),
+    cacheWrite: z.number().finite().nonnegative().nullable().optional(),
   })).optional(),
   /** Number of distinct token-bearing usage observations during the turn. */
   modelCalls: z.number(),
@@ -47,6 +53,7 @@ export type CostSource = z.infer<typeof CostSourceSchema>;
 export const CostBreakdownSchema = z.object({
   inUsd: z.number(),
   cacheUsd: z.number(),
+  cacheWriteUsd: z.number().optional(),
   outUsd: z.number(),
   otherUsd: z.number().nullable(),
 });
@@ -61,11 +68,13 @@ export const TurnRowSchema = TurnRecordSchema.extend({
 export type TurnRow = z.infer<typeof TurnRowSchema>;
 
 export const InFlightSchema = z.object({
+  usageGap: z.boolean().optional(),
   turnId: z.string().nullable(),
   startedAt: z.string(),
   modelCalls: z.number(),
   input: z.number().nullable(),
   cached: z.number().nullable(),
+  cacheWrite: z.number().nullable().optional(),
   output: z.number().nullable(),
   /** Current turn estimate from the same server-side pricing path as settled rows. */
   effectiveCostUsd: z.number().nullable(),
@@ -79,6 +88,7 @@ export const SummarySchema = z.object({
   turns: z.number(),
   input: z.number(),
   cached: z.number(),
+  cacheWrite: z.number().optional(),
   output: z.number(),
   costUsd: z.number().nullable(),
   /** Reported + estimated costs for priced turns. */

@@ -2,6 +2,7 @@ import type { PaseoApi } from '@getpaseo/client';
 import type { TurnRecord } from '../shared/ledger.ts';
 import { UsageTimelineSchema, USAGE_TIMELINE_KIND } from '../shared/timeline.ts';
 import { enrichTurn, ensurePricing } from './pricing.ts';
+import { getPreferences } from './preferences.ts';
 
 /** Called only after durable append, never for records recovered on startup. */
 export class TimelinePublisher {
@@ -9,6 +10,7 @@ export class TimelinePublisher {
   private pending = new Set<Promise<void>>();
 
   publish(paseo: PaseoApi, record: TurnRecord): void {
+    if (!getPreferences().timelineSummaries) return;
     if (this.queued.has(record.id)) return;
     this.queued.add(record.id);
     const work = (async () => {

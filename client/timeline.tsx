@@ -7,8 +7,9 @@ import { fmtCost, fmtDuration, tokensLine, statusColor } from './ui.tsx';
 export function UsageTimelineRow({ item, theme }: PluginTimelineItemProps<UsageTimeline>) {
   const row = item.data;
   const cost = fmtCost(row.effectiveCostUsd);
-  const tokens = tokensLine(row.input, row.cached, row.output);
+  const tokens = tokensLine(row.input, row.cached, row.output, row.cacheWrite);
   const details = [row.status === 'completed' ? null : row.status,
+    row.usageGap ? 'usage gap' : null,
     tokens ? `${row.quality === 'partial' ? '≈ ' : ''}${tokens}` : 'usage unavailable',
     cost ? `${row.costSource !== 'reported' ? '≈' : ''}${cost}` : null,
     row.durationMs === null ? null : fmtDuration(row.durationMs),

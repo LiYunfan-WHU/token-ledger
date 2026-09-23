@@ -21,6 +21,21 @@ test("context-window-only usage yields no observation", () => {
   assert.equal(tokenObservation({}), null);
 });
 
+test('write-only usage is retained, validated, and participates in observation identity', () => {
+  assert.equal(tokenObservation({ cacheWriteInputTokens: -1 }), null);
+  assert.equal(tokenObservation({ cacheWriteInputTokens: Infinity }), null);
+  const first = tokenObservation({ cacheWriteInputTokens: 10 })!;
+  const second = tokenObservation({ cacheWriteInputTokens: 20 })!;
+  assert.equal(sameTokens(first, second), false);
+  const record = finalizeTurn({ ...base, provider: 'codex', observations: [first, second] });
+  assert.equal(record.cacheWrite, 30);
+  assert.deepEqual(record.requests?.map((r) => r.cacheWrite), [10, 20]);
+  const reported = finalizeTurn({ ...base, observations: [first], finalUsage: { cacheWriteInputTokens: 40, totalCostUsd: 0.5 } });
+  assert.equal(reported.cacheWrite, 40);
+  assert.equal(reported.costUsd, 0.5);
+  assert.equal(finalizeTurn(base).cacheWrite, undefined);
+});
+
 test("negative and non-finite values are ignored", () => {
   const observation = tokenObservation({ inputTokens: -5, outputTokens: Number.NaN, cachedInputTokens: 10 });
   assert.deepEqual(observation, { input: null, cached: 10, output: null, cost: null });

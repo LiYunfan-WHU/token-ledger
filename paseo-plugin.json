@@ -1,6 +1,7 @@
 {
   "id": "token-ledger",
+  "description": "Per-turn token usage, cache counts, and cost tracking with a persistent local ledger.",
   "requirements": {
-    "paseo": ">=0.8.0 <0.9.0"
+    "paseo": ">=0.9.1 <0.10.0"
   }
 }

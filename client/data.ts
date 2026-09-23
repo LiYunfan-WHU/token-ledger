@@ -1,15 +1,19 @@
-import { usePaseo, useRpc } from '@getpaseo/plugin/client';
+import { usePaseo, useRpc, useSettings } from '@getpaseo/plugin/client';
 import type { PaseoApi } from '@getpaseo/client';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { ledgerSync, ledgerOverview, type SyncResult } from '../shared/ledger.ts';
+import { preferences, refreshIntervalMs } from '../shared/preferences.ts';
 
 const coordinators = new WeakMap<QueryClient, Map<PaseoApi, { count: number; dispose: () => void }>>();
 
 /** One catalog listener per mounted client, with bounded trailing invalidation. */
-function useRefresh(): void {
+function useRefresh(pricingKey: string | null): void {
   const paseo = usePaseo();
   const cache = useQueryClient();
+  useEffect(() => {
+    if (pricingKey !== null) void cache.invalidateQueries({ queryKey: ['token-ledger'] });
+  }, [pricingKey, cache]);
   useEffect(() => {
     let clients = coordinators.get(cache);
     if (!clients) { clients = new Map(); coordinators.set(cache, clients); }
@@ -45,9 +49,10 @@ function useRefresh(): void {
 }
 
 export function useLedger(agentId: string) {
+  const settings = useSettings(preferences);
   const sync = useRpc(ledgerSync);
   const cache = useQueryClient();
-  useRefresh();
+  useRefresh(settings.status === 'ready' ? `${settings.values.openRouterPricing}:${settings.values.builtinPricing}` : null);
   const queryKey = ['token-ledger', 'agent', agentId] as const;
   return useQuery({
     queryKey,
@@ -57,17 +62,18 @@ export function useLedger(agentId: string) {
       return previous?.recordsRevision === next.recordsRevision ? { ...next, records: previous.records } : next;
     },
     staleTime: 1000,
-    refetchInterval: (query) => query.state.data?.inFlight ? 3000 : 30000,
+    refetchInterval: (query) => refreshIntervalMs(settings.status === 'ready' ? settings.values.refreshInterval : 'normal', !!query.state.data?.inFlight),
   });
 }
 
 export function useOverview() {
+  const settings = useSettings(preferences);
   const overview = useRpc(ledgerOverview);
-  useRefresh();
+  useRefresh(settings.status === 'ready' ? `${settings.values.openRouterPricing}:${settings.values.builtinPricing}` : null);
   return useQuery({
     queryKey: ['token-ledger', 'overview'],
     queryFn: () => overview({}),
     staleTime: 1000,
-    refetchInterval: (query) => query.state.data?.groups.some((g) => g.agents.some((a) => a.active)) ? 3000 : 30000,
+    refetchInterval: (query) => refreshIntervalMs(settings.status === 'ready' ? settings.values.refreshInterval : 'normal', !!query.state.data?.groups.some((g) => g.agents.some((a) => a.active))),
   });
 }

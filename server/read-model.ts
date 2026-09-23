@@ -19,6 +19,7 @@ function summaryFromRecords(records: readonly TurnRecord[]): Summary {
     summary.turns += 1;
     summary.input += row.input ?? 0;
     summary.cached += row.cached ?? 0;
+    if (row.cacheWrite != null) summary.cacheWrite = (summary.cacheWrite ?? 0) + row.cacheWrite;
     summary.output += row.output ?? 0;
     if (record.costUsd !== null) summary.costUsd = (summary.costUsd ?? 0) + record.costUsd;
     if (row.effectiveCostUsd !== null) {

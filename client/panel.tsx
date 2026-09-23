@@ -20,6 +20,7 @@ import {
   tokensLine,
   turnColumns,
   TurnTableHeader,
+  UsageCoverageNote,
 } from "./ui.tsx";
 
 function useElapsed(startedAt: string | null): string {
@@ -56,8 +57,8 @@ function CtxBar({ ctx, theme }: { ctx: Ctx; theme: PluginTheme }) {
 
 function InFlightCard({ inFlight, seq, theme }: { inFlight: InFlight; seq: number; theme: PluginTheme }) {
   const elapsed = useElapsed(inFlight.startedAt);
-  const tokens = tokensLine(inFlight.input, inFlight.cached, inFlight.output);
-  const pct = fmtPct(cacheRatio(inFlight.input, inFlight.cached));
+  const tokens = tokensLine(inFlight.input, inFlight.cached, inFlight.output, inFlight.cacheWrite);
+  const pct = fmtPct(cacheRatio(inFlight.input, inFlight.cached, inFlight.cacheWrite));
   const ctx = inFlight.ctxUsed !== null && inFlight.ctxMax !== null ? { used: inFlight.ctxUsed, max: inFlight.ctxMax } : null;
   return (
     <View
@@ -96,6 +97,7 @@ function InFlightCard({ inFlight, seq, theme }: { inFlight: InFlight; seq: numbe
         </Text>
       ) : null}
       {ctx ? <CtxBar ctx={ctx} theme={theme} /> : null}
+      {inFlight.usageGap ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>Connection interrupted · usage may be incomplete.</Text> : null}
     </View>
   );
 }
@@ -124,9 +126,9 @@ function TurnCell({
 
 function RecordRow({ record, theme, dense }: { record: TurnRow; theme: PluginTheme; dense: boolean }) {
   const cols = turnColumns(dense);
-  const hasUsage = record.input !== null || record.cached !== null || record.output !== null;
+  const hasUsage = record.input !== null || record.cached !== null || record.output !== null || record.cacheWrite != null;
   const split = record.costBreakdown;
-  const pct = fmtPct(cacheRatio(record.input, record.cached));
+  const pct = fmtPct(cacheRatio(record.input, record.cached, record.cacheWrite));
   const cacheCost = split ? fmtCostSmall(split.cacheUsd) : "–";
   const costDetail =
     record.costSource === "override"
@@ -171,7 +173,7 @@ function RecordRow({ record, theme, dense }: { record: TurnRow; theme: PluginThe
           }}
         >
           {fmtDuration(record.durationMs)}
-          {record.quality === "partial" ? " ≈" : ""}
+            {record.usageGap ? ' · gap' : record.quality === "partial" ? " ≈" : ""}
         </Text>
       </View>
       {hasUsage ? (
@@ -182,12 +184,18 @@ function RecordRow({ record, theme, dense }: { record: TurnRow; theme: PluginThe
             width={cols.in}
             theme={theme}
           />
-          <TurnCell
-            top={fmtTokens(record.cached)}
-            bottom={pct ? `${cacheCost}·${pct}` : cacheCost}
-            width={cols.cache}
-            theme={theme}
-          />
+          <View style={{ gap: 3 }}>
+            <TurnCell
+              top={fmtTokens(record.cached)}
+              bottom={pct ? `${cacheCost}·${pct}` : cacheCost}
+              width={cols.cache}
+              theme={theme}
+            />
+            {record.cacheWrite != null ? (
+              <TurnCell top={`${fmtTokens(record.cacheWrite)} write`}
+                bottom={split ? fmtCostSmall(split.cacheWriteUsd ?? 0) : '–'} width={cols.cache} theme={theme} />
+            ) : null}
+          </View>
           <TurnCell
             top={fmtTokens(record.output)}
             bottom={split ? fmtCostSmall(split.outUsd) : "–"}
@@ -260,6 +268,7 @@ export function TokenLedgerPanel({ theme, layout, agentId }: PluginAgentPanelPro
               </Text>
             </View>
             <SummaryRow summary={data.summary} theme={theme} dense={dense} />
+            <UsageCoverageNote theme={theme} />
             {!data.inFlight && data.ctx ? <CtxBar ctx={data.ctx} theme={theme} /> : null}
           </View>
           {data.inFlight ? <InFlightCard inFlight={data.inFlight} seq={data.summary.turns + 1} theme={theme} /> : null}
@@ -279,13 +288,18 @@ export function TokenLedgerPanel({ theme, layout, agentId }: PluginAgentPanelPro
                 ))}
                 {data.records.some((record) => fmtResidual(record.costBreakdown?.otherUsd ?? null).trim() !== "") ? (
                   <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10, paddingTop: 6 }}>
-                    ± under COST: cost not covered by the reported tokens — mostly cache writes, which the provider
-                    doesn't report as token counts.
+                    ± under COST: difference between reported cost and the token-based estimate, including charges
+                    for usage Paseo does not expose.
                   </Text>
                 ) : null}
                 {data.records.some((record) => record.costSource && record.costSource !== "reported") ? (
                   <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10, paddingTop: 4 }}>
                     ≈ estimated: override = local pricing.json · OR ref = OpenRouter reference · list = built-in prices.
+                  </Text>
+                ) : null}
+                {data.records.some((record) => record.usageGap) ? (
+                  <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10, paddingTop: 4 }}>
+                    gap: connection interrupted; usage may be incomplete. A missing turn outcome is recorded as unknown.
                   </Text>
                 ) : null}
               </>

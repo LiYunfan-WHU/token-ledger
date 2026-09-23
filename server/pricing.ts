@@ -3,8 +3,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CostSource, TurnRecord, TurnRow } from "../shared/ledger.ts";
-import { costBreakdownWithPricing, modelPricing, type ModelPricing } from "../shared/pricing.ts";
+import { canonicalModel, costBreakdownWithPricing, modelPricing, type ModelPricing } from "../shared/pricing.ts";
 import { freshInput, usageSemantics } from "../shared/semantics.ts";
+import { getPreferences, preferencesRevision } from './preferences.ts';
 
 type PriceTier = ModelPricing & { upToInputTokens?: number };
 type PriceEntry = { providers?: string[]; model: string; tiers: PriceTier[] };
@@ -22,6 +23,7 @@ export const PriceFileSchema = z.object({
           upToInputTokens: z.number().int().positive().optional(),
           input: z.number().nonnegative(),
           cacheRead: z.number().nonnegative(),
+          cacheWrite: z.number().finite().nonnegative().optional(),
           output: z.number().nonnegative(),
         }),
       ).min(1).refine((tiers) => tiers.every((tier, i) =>
@@ -149,18 +151,6 @@ function seedPrices(): PriceEntry[] {
   return [...grouped.values()];
 }
 
-function canonicalModel(value: string): string {
-  let model = value.trim().toLowerCase();
-  if (model.startsWith("[")) {
-    try {
-      const parsed = JSON.parse(model) as unknown;
-      if (Array.isArray(parsed) && typeof parsed.at(-1) === "string") model = parsed.at(-1) as string;
-    } catch {}
-  }
-  model = model.split("/").at(-1) ?? model;
-  return model.replace(/\[1m\]$/i, "").replace(/[._]/g, "-").replace(/-+/g, "-");
-}
-
 function providerMatches(entry: PriceEntry, provider: string | null, model: string | null): boolean {
   if (!entry.providers?.length) return true;
   const haystack = `${provider ?? ""} ${model ?? ""}`.toLowerCase();
@@ -179,18 +169,19 @@ export function tokenRouterDefaultPricing(model: string, promptTokens: number): 
   return { input, cacheRead, output };
 }
 
-type OpenRouterPrice = { id: string; prompt: number; completion: number; cacheRead: number };
+type OpenRouterPrice = { id: string; prompt: number; completion: number; cacheRead: number; cacheWrite?: number };
 const OpenRouterCacheSchema = z.object({
   fetchedAt: z.string().datetime(),
   prices: z.array(z.object({ id: z.string(), prompt: z.number().finite().nonnegative(),
-    completion: z.number().finite().nonnegative(), cacheRead: z.number().finite().nonnegative() })),
+    completion: z.number().finite().nonnegative(), cacheRead: z.number().finite().nonnegative(),
+    cacheWrite: z.number().finite().nonnegative().optional() })),
 });
 
 let overridePrices: PriceEntry[] = [];
 let openRouterPrices: OpenRouterPrice[] = [];
 let loadPromise: Promise<void> | null = null;
 let revision = 0;
-export const pricingRevision = () => revision;
+export const pricingRevision = () => `${revision}:${preferencesRevision()}`;
 
 async function loadOverrides(): Promise<void> {
   await mkdir(DATA_DIR, { recursive: true });
@@ -220,10 +211,12 @@ async function loadCachedPrices(): Promise<void> {
   } catch {}
 }
 function refreshPrices(): void {
-  if (refreshPromise || Date.now() < nextRefresh) return;
+  if (!getPreferences().openRouterPricing || refreshPromise || Date.now() < nextRefresh) return;
   nextRefresh = Date.now() + 5 * 60 * 1000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
   refreshPromise = (async () => {
-    const response = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(10_000) });
+    const response = await fetch("https://openrouter.ai/api/v1/models", { signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const body = (await response.json()) as { data?: Array<{ id?: string; pricing?: Record<string, string> }> };
     const prices = (body.data ?? []).flatMap((item): OpenRouterPrice[] => {
@@ -231,11 +224,14 @@ function refreshPrices(): void {
       const completion = Number(item.pricing?.completion);
       if (!item.id || !Number.isFinite(prompt) || prompt < 0 || !Number.isFinite(completion) || completion < 0) return [];
       const rawCache = Number(item.pricing?.input_cache_read);
+      const writePrice = item.pricing?.input_cache_write;
+      const rawWrite = typeof writePrice === 'string' && writePrice.trim() !== '' ? Number(writePrice) : NaN;
       return [{
         id: item.id,
         prompt: prompt * 1_000_000,
         completion: completion * 1_000_000,
         cacheRead: (Number.isFinite(rawCache) && rawCache >= 0 ? rawCache : prompt) * 1_000_000,
+        ...(Number.isFinite(rawWrite) && rawWrite >= 0 ? { cacheWrite: rawWrite * 1_000_000 } : {}),
       }];
     });
     if (!prices.length) throw new Error('Empty pricing response');
@@ -247,7 +243,7 @@ function refreshPrices(): void {
     nextRefresh = Date.now() + OPENROUTER_MAX_AGE_MS;
   })().catch((error) => {
     console.error("token-ledger: OpenRouter pricing refresh failed; using cached prices", error);
-  }).finally(() => { refreshPromise = null; });
+  }).finally(() => { clearTimeout(timeout); refreshPromise = null; });
 }
 
 /** Local pricing is available immediately; remote freshness never blocks RPC. */
@@ -271,7 +267,7 @@ function lookupOpenRouter(model: string): ModelPricing | null {
   const matches = openRouterPrices.filter((price) => canonicalModel(price.id) === canonical);
   if (matches.length !== 1) return null;
   const price = matches[0];
-  return { input: price.prompt, cacheRead: price.cacheRead, output: price.completion };
+  return { input: price.prompt, cacheRead: price.cacheRead, cacheWrite: price.cacheWrite, output: price.completion };
 }
 
 function resolvePricing(provider: string | null, model: string | null, promptTokens: number): { pricing: ModelPricing; source: Exclude<CostSource, "reported"> } | null {
@@ -279,14 +275,14 @@ function resolvePricing(provider: string | null, model: string | null, promptTok
   const canonical = canonicalModel(model);
   const override = overridePrices.find((entry) => canonicalModel(entry.model) === canonical && providerMatches(entry, provider, model));
   if (override) return { pricing: chooseTier(override, promptTokens), source: "override" };
-  const openrouter = lookupOpenRouter(model);
+  const openrouter = getPreferences().openRouterPricing ? lookupOpenRouter(model) : null;
   if (openrouter) return { pricing: openrouter, source: "openrouter" };
-  const builtin = modelPricing(model);
+  const builtin = getPreferences().builtinPricing ? modelPricing(model) : null;
   return builtin ? { pricing: builtin, source: "builtin" } : null;
 }
 
-type PriceableUsage = Pick<TurnRecord, "provider" | "model" | "input" | "cached" | "output"> & {
-  requests?: Array<Pick<NonNullable<TurnRecord["requests"]>[number], "input" | "cached" | "output">>;
+type PriceableUsage = Pick<TurnRecord, "provider" | "model" | "input" | "cached" | "cacheWrite" | "output"> & {
+  requests?: TurnRecord['requests'];
 };
 
 /** Prices raw provider usage, including per-request tiers when observations are available. */
@@ -296,31 +292,33 @@ export function estimateUsageCost(usage: PriceableUsage): {
   costBreakdown: ReturnType<typeof costBreakdownWithPricing>;
 } {
   const semantics = usageSemantics(usage.provider, usage.model);
-  const input = freshInput(semantics, usage.input, usage.cached);
-  const promptTokens = (input ?? 0) + (usage.cached ?? 0);
+  const input = freshInput(semantics, usage.input, usage.cached, usage.cacheWrite);
+  const promptTokens = (input ?? 0) + (usage.cached ?? 0) + (usage.cacheWrite ?? 0);
   const resolved = resolvePricing(usage.provider, usage.model, promptTokens);
   let breakdown = resolved ? costBreakdownWithPricing({ ...usage, input, costUsd: null }, resolved.pricing) : null;
   if (usage.requests?.length && resolved) {
     const parts = usage.requests.map((request) => {
-      const fresh = freshInput(semantics, request.input, request.cached);
-      const rate = resolvePricing(usage.provider, usage.model, (fresh ?? 0) + (request.cached ?? 0));
+      const fresh = freshInput(semantics, request.input, request.cached, request.cacheWrite);
+      const rate = resolvePricing(usage.provider, usage.model, (fresh ?? 0) + (request.cached ?? 0) + (request.cacheWrite ?? 0));
       return rate ? costBreakdownWithPricing({ ...request, input: fresh, costUsd: null }, rate.pricing) : null;
     });
     if (parts.every((part) => part !== null)) {
       const sum = parts.reduce((total, part) => ({ inUsd: total.inUsd + part!.inUsd,
-        cacheUsd: total.cacheUsd + part!.cacheUsd, outUsd: total.outUsd + part!.outUsd }), { inUsd: 0, cacheUsd: 0, outUsd: 0 });
-      breakdown = { ...sum, otherUsd: null };
+        cacheUsd: total.cacheUsd + part!.cacheUsd, cacheWriteUsd: total.cacheWriteUsd + (part!.cacheWriteUsd ?? 0),
+        outUsd: total.outUsd + part!.outUsd }), { inUsd: 0, cacheUsd: 0, cacheWriteUsd: 0, outUsd: 0 });
+      const { cacheWriteUsd, ...known } = sum;
+      breakdown = { ...known, ...(parts.some((part) => part!.cacheWriteUsd !== undefined) ? { cacheWriteUsd } : {}), otherUsd: null };
     }
   }
   return {
-    effectiveCostUsd: breakdown ? breakdown.inUsd + breakdown.cacheUsd + breakdown.outUsd : null,
+    effectiveCostUsd: breakdown ? breakdown.inUsd + breakdown.cacheUsd + (breakdown.cacheWriteUsd ?? 0) + breakdown.outUsd : null,
     costSource: resolved?.source ?? null,
     costBreakdown: breakdown,
   };
 }
 
 export function enrichTurn(record: TurnRecord, seq: number): TurnRow {
-  const input = freshInput(usageSemantics(record.provider, record.model), record.input, record.cached);
+  const input = freshInput(usageSemantics(record.provider, record.model), record.input, record.cached, record.cacheWrite);
   const estimated = estimateUsageCost(record);
   const estimate = estimated.effectiveCostUsd;
   const breakdown = estimated.costBreakdown && record.costUsd !== null

@@ -3,7 +3,7 @@ import type { PluginButtonIconProps, PluginButtonRegistration, PluginClientConte
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useLedger } from "./data.ts";
 import { useEffect } from "react";
-import { listAgents } from "../shared/agents.ts";
+import { subscribeAgents } from "../shared/agents.ts";
 import { ledgerEnsure, type SyncResult } from "../shared/ledger.ts";
 import { fmtCost, fmtTokens } from "./ui.tsx";
 
@@ -17,14 +17,14 @@ function pillLabel({ summary, inFlight, ctx }: SyncResult): string {
   const estimated = summary.estimatedTurns > 0 || inFlight?.effectiveCostUsd != null;
   const parts = [cost
     ? `${estimated ? "≈" : ""}${cost}`
-    : `${fmtTokens(summary.input + summary.cached + summary.output)} tok`];
+    : `${fmtTokens(summary.input + summary.cached + (summary.cacheWrite ?? 0) + summary.output)} tok`];
   const liveCtx = inFlight?.ctxUsed != null && inFlight.ctxMax != null
     ? { used: inFlight.ctxUsed, max: inFlight.ctxMax } : ctx;
   if (liveCtx && liveCtx.max > 0) parts.push(`ctx ${Math.round(liveCtx.used / liveCtx.max * 100)}%`);
   return parts.join(" · ");
 }
 
-export function contributePills(client: PluginClientContext, placement: PanelPlacement): () => void {
+export function contributePills(client: PluginClientContext, placement: PanelPlacement): () => Promise<void> {
   let disposed = false;
   const pills = new Map<string, { workspaceId: string; handle: PluginButtonRegistration }>();
   const remove = (id: string) => {
@@ -59,22 +59,23 @@ export function contributePills(client: PluginClientContext, placement: PanelPla
     });
     pills.set(agent.id, { workspaceId, handle });
   };
-  const changed = new Set<string>();
-  let listing = true;
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
-    const id = update.kind === "upsert" ? update.agent.id : update.agentId;
-    if (listing) changed.add(id);
-    if (update.kind === "upsert") upsert(update.agent);
-    else remove(update.agentId);
+  const subscription = subscribeAgents(client.paseo, {
+    onSnapshot: (agents) => {
+      if (disposed) return;
+      const ids = new Set(agents.map((agent) => agent.id));
+      for (const id of pills.keys()) if (!ids.has(id)) remove(id);
+      for (const agent of agents) upsert(agent);
+    },
+    onUpdate: (update) => {
+      if (update.kind === 'upsert') upsert(update.agent);
+      else remove(update.agentId);
+    },
+    onError: (error) => console.error('token-ledger: failed to list composer agents', error),
   });
-  void listAgents(client.paseo, true).then((agents) => {
-    for (const agent of agents) if (!changed.has(agent.id)) upsert(agent);
-  }).catch((error) => console.error("token-ledger: failed to list composer agents", error))
-    .finally(() => { listing = false; changed.clear(); });
   void client.rpc(ledgerEnsure, {}).catch((error) => console.error("token-ledger: tracker startup failed", error));
-  return () => {
+  return async () => {
     disposed = true;
-    unsubscribe();
     for (const id of pills.keys()) remove(id);
+    await subscription.release();
   };
 }

@@ -6,9 +6,11 @@ import { contributePills } from "./client/pill.tsx";
 import { createPanelPlacement } from "./client/layout.ts";
 import { UsageTimelineRow } from "./client/timeline.tsx";
 import { UsageTimelineSchema, USAGE_TIMELINE_KIND } from "./shared/timeline.ts";
+import { TokenLedgerSettings } from './client/settings.tsx';
 
 export default function contribute(client: PluginClientContext) {
   const placement = createPanelPlacement();
+  client.addSettingsScreen({ id: 'preferences', title: 'TokenLedger', icon: 'Coins', Component: TokenLedgerSettings });
   client.addTimelineRenderer({ kind: USAGE_TIMELINE_KIND, version: 1, schema: UsageTimelineSchema, Component: UsageTimelineRow });
   client.addWorkspacePanel({
     id: "ledger",

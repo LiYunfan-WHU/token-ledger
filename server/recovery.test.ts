@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PaseoApi, PaseoAgentTimelineEvent } from '@getpaseo/client';
 import { createState, noteUsage, closeTurn } from './turns.ts';
+import { ownedSnapshot } from '../shared/subscription-test-helpers.ts';
 
 test('startup replays pending writes idempotently, settles missing agents, and preserves live observations without backfilling timeline', async () => {
   const home = await mkdtemp(join(tmpdir(), 'token-ledger-recovery-'));
@@ -27,9 +28,9 @@ test('startup replays pending writes idempotently, settles missing agents, and p
   const published: unknown[] = [];
   const paseo = { agents: {
     subscribe: () => () => {},
-    list: async () => ({entries:[{agent:snapshot}], pageInfo:{nextCursor:null}}),
+    list: async () => ownedSnapshot({entries:[{agent:snapshot}], pageInfo:{nextCursor:null}}).page,
     ref: () => ({timeline:{subscribe: (fn: typeof observe) => {
-      observe = fn; return Object.assign(() => {}, {ready:Promise.resolve()});
+      observe = fn; return Object.assign(() => {}, {ready:Promise.resolve(), release: async () => {}});
     }, append: async (item: unknown) => {published.push(item); return {seq:1, epoch:'test'};}}}),
   }} as unknown as PaseoApi;
   const tracker = await import('./tracker.ts');

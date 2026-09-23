@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cacheRatio, costBreakdown, modelPricing } from "./pricing.ts";
+import { cacheRatio, costBreakdown, costBreakdownWithPricing, modelPricing } from "./pricing.ts";
 
 test("model matching covers known families and rejects unknown", () => {
   assert.deepEqual(modelPricing("claude-opus-5"), { input: 5, cacheRead: 0.5, output: 25 });
@@ -9,6 +9,17 @@ test("model matching covers known families and rejects unknown", () => {
   assert.deepEqual(modelPricing("claude-fable-5"), { input: 10, cacheRead: 1.0, output: 50 });
   assert.equal(modelPricing("gpt-5-codex"), null);
   assert.equal(modelPricing(null), null);
+});
+
+test('Opus 5.5 uses verified standard prices across aliases without guessing Fast Mode or future models', () => {
+  const standard = { input: 4, cacheRead: 0.2, cacheWrite: 5, output: 20 };
+  for (const model of ['claude-opus-5.5', 'claude-opus-5-5', 'anthropic/claude-opus-5.5', 'claude-opus-5-5[1m]']) {
+    assert.deepEqual(modelPricing(model), standard);
+  }
+  for (const model of ['claude-opus-5.5-fast', 'claude-opus-5.5:batch', 'claude-opus-6', 'claude-opus-5.6']) {
+    assert.equal(modelPricing(model), null);
+  }
+  assert.deepEqual(modelPricing('claude-opus-4-1-20250805'), { input: 15, cacheRead: 1.5, output: 75 });
 });
 
 test("breakdown estimates from list prices when no total is reported", () => {
@@ -69,4 +80,15 @@ test("cacheRatio", () => {
   assert.equal(cacheRatio(null, 8000), 1);
   assert.equal(cacheRatio(2000, null), null);
   assert.equal(cacheRatio(0, 0), null);
+  assert.equal(cacheRatio(1000, 8000, 1000), 0.8);
+});
+
+test('cache writes have an independent price and do not increase reported totals', () => {
+  const usage = { input: 10, cached: 60, cacheWrite: 30, output: 5, costUsd: 1 };
+  const split = costBreakdownWithPricing(usage, { input: 1, cacheRead: 0.1, cacheWrite: 2, output: 5 })!;
+  assert.equal(split.inUsd, 0.00001);
+  assert.equal(split.cacheWriteUsd, 0.00006);
+  assert.equal(split.inUsd + split.cacheUsd + split.cacheWriteUsd! + split.outUsd + split.otherUsd!, 1);
+  assert.equal(costBreakdownWithPricing(usage, { input: 1, cacheRead: 0.1, output: 5 })!.cacheWriteUsd, 0.00003);
+  assert.equal(costBreakdownWithPricing(usage, { input: 1, cacheRead: 0.1, cacheWrite: 0, output: 5 })!.cacheWriteUsd, 0);
 });

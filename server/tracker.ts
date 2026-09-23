@@ -1,8 +1,9 @@
-import { closeTurn, createState, noteUsage, startLifecycleTurn, streamTurn, type AgentState, type AgentSnapshotLike } from "./turns.ts";
+import { closeTurn, createState, markUsageGap, reconcileUsage, noteUsage, startLifecycleTurn, streamTurn, type AgentState, type AgentSnapshotLike } from "./turns.ts";
 import { loadJournal, saveJournal } from "./journal.ts";
 import type { PluginLifecycleEvents } from "@getpaseo/plugin/server";
-import { listAgents } from "../shared/agents.ts";
-import type { PaseoAgentTimelineEvent, PaseoAgentTimelineSubscription, PaseoApi } from "@getpaseo/client";
+import { subscribeAgents } from "../shared/agents.ts";
+import type { CatalogSubscription } from '../shared/catalog-subscription.ts';
+import type { PaseoAgent, PaseoAgentTimelineEvent, PaseoApi } from "@getpaseo/client";
 import type { AgentUsageRow, InFlight, OverviewResult, Summary, SyncResult, TurnRecord } from "../shared/ledger.ts";
 import { freshInput, usageSemantics, providerSemantics } from "../shared/semantics.ts";
 import { ensurePricing, estimateUsageCost } from "./pricing.ts";
@@ -17,14 +18,17 @@ import {
 import { readModel, EMPTY_SUMMARY } from "./read-model.ts";
 import { Catalog } from "./catalog.ts";
 import { TimelinePublisher } from "./timeline.ts";
+import { TimelineSubscriptions } from './subscriptions.ts';
 const catalog = new Catalog();
 const publisher = new TimelinePublisher();
 const liveRecords = new Set<string>();
 
 const agents = new Map<string, AgentState>();
-const subscriptions = new Map<string, PaseoAgentTimelineSubscription>();
+let subscriptions: TimelineSubscriptions | null = null;
+const agentRevisions = new Map<string, number>();
+const needsReconcile = new Set<string>();
 let startPromise: Promise<void> | null = null;
-let unsubscribeAgents: (() => void) | null = null;
+let agentCatalog: CatalogSubscription | null = null;
 let stopped = false;
 let trackerApi: PaseoApi | null = null;
 let stopPromise: Promise<void> | null = null;
@@ -57,7 +61,7 @@ function persist(record: TurnRecord | null): void {
   checkpoint();
   if (!record) return;
   pendingRecords.set(record.id, record);
-  if (!record.source.startsWith("recovered_interruption:")) liveRecords.add(record.id);
+  if (!record.source.startsWith("recovered_")) liveRecords.add(record.id);
   persistence = persistence.catch(() => undefined).then(drainRecords);
   void persistence.catch((error) => console.error("token-ledger: failed to persist turn", error));
 }
@@ -97,42 +101,43 @@ export async function observeEnd(event: PluginLifecycleEvents["agent.turn_ended"
   };
   terminalTimers.set(key, { timer: setTimeout(settle, 250), settle });
 }
-function unwatchAgent(id: string): void {
-  subscriptions.get(id)?.();
-  subscriptions.delete(id);
-}
-function retireAgent(id: string): void {
+function retireAgent(id: string, gap = false): void {
+  needsReconcile.delete(id);
   const state = agents.get(id);
-  if (state) persist(closeTurn(id, state, "canceled", null, new Date().toISOString()));
-  unwatchAgent(id);
+  if (state) {
+    if (gap) markUsageGap(state);
+    const record = closeTurn(id, state, gap ? 'unknown' : 'canceled', null, new Date().toISOString());
+    if (record && gap) record.source = `recovered_gap:${record.source}`;
+    persist(record);
+  }
+  subscriptions?.unwatch(id);
 }
-function watchAgent(paseo: PaseoApi, agent: AgentSnapshotLike): void {
+function watchAgent(agent: AgentSnapshotLike, restored = false): void {
   if (stopped) return;
   if (recovered.delete(agent.id) && !agent.activeTurn && stateFor(agent.id).open) {
     const record = closeTurn(agent.id, stateFor(agent.id), "canceled", null, new Date().toISOString());
     if (record) record.source = `recovered_interruption:${record.source}`;
     persist(record);
   }
-  persist(noteUsage(stateFor(agent.id), agent));
-  if (subscriptions.has(agent.id)) return;
-  const subscription = paseo.agents.ref(agent.id).timeline.subscribe(observeStream);
-  subscriptions.set(agent.id, subscription);
-  void subscription.ready.catch((error) => {
-    if (subscriptions.get(agent.id) === subscription) unwatchAgent(agent.id);
-    console.error("token-ledger: timeline subscription failed", agent.id, error);
-  });
+  if (restored) {
+    for (const record of reconcileUsage(stateFor(agent.id), agent)) persist(record);
+    checkpoint();
+  } else persist(noteUsage(stateFor(agent.id), agent));
+  void subscriptions?.watch(agent.id).catch(() => {});
 }
 export async function prepareAgent(paseo: PaseoApi, agentId: string): Promise<void> {
   await ensureTracker(paseo);
   if (stopped) return;
   const handle = paseo.agents.ref(agentId);
   await handle.refresh();
-  watchAgent(paseo, handle.current() ?? { id: agentId });
-  await subscriptions.get(agentId)?.ready;
+  if (stopped) return;
+  watchAgent(handle.current() ?? { id: agentId });
+  await subscriptions?.watch(agentId, true);
 }
 export function ensureTracker(paseo: PaseoApi): Promise<void> {
   if (stopped) return Promise.resolve();
   trackerApi = paseo;
+  agentCatalog?.ensure();
   startPromise ??= (async () => {
     await loadStore();
     const journal = await loadJournal();
@@ -154,26 +159,55 @@ export function ensureTracker(paseo: PaseoApi): Promise<void> {
     }
     await drainRecords();
     if (stopped) return;
-    const changed = new Set<string>();
-    let listing = true;
-    unsubscribeAgents = paseo.agents.subscribe((update) => {
-      if (update.kind === "upsert") {
-        catalog.note(update.agent);
-        if (listing) changed.add(update.agent.id);
-        if (update.agent.archivedAt || update.agent.status === "closed") retireAgent(update.agent.id);
-        else watchAgent(paseo, update.agent);
-      } else {
-        if (listing) changed.add(update.agentId);
-        catalog.remove(update.agentId);
-        retireAgent(update.agentId);
-      }
+    const bump = (id: string) => agentRevisions.set(id, (agentRevisions.get(id) ?? 0) + 1);
+    subscriptions = new TimelineSubscriptions(paseo, {
+      event: (event) => {
+        bump(event.agentId);
+        const open = agents.get(event.agentId)?.open;
+        observeStream(event);
+        if (open && !agents.get(event.agentId)?.open) needsReconcile.delete(event.agentId);
+      },
+      gap: (id) => { needsReconcile.add(id); markUsageGap(stateFor(id)); checkpoint(); },
+      restored: async (id) => {
+        const revision = agentRevisions.get(id);
+        const handle = paseo.agents.ref(id);
+        await handle.refresh();
+        if (stopped || agentRevisions.get(id) !== revision) return;
+        const snapshot = handle.current();
+        if (!snapshot) { retireAgent(id, true); return; }
+        applyAgent(snapshot, true);
+      },
+      error: (id, error) => console.error('token-ledger: timeline subscription failed', id, error),
     });
+    const applyAgent = (agent: PaseoAgent, restored = false) => {
+      restored = needsReconcile.delete(agent.id) || restored;
+      bump(agent.id);
+      catalog.note(agent);
+      if (agent.archivedAt || agent.status === 'closed') retireAgent(agent.id, restored);
+      else watchAgent(agent, restored);
+    };
     try {
-      const initial = await listAgents(paseo, true);
-      for (const agent of initial) if (!changed.has(agent.id)) {
-        catalog.note(agent);
-        if (!agent.archivedAt && agent.status !== "closed") watchAgent(paseo, agent);
-      }
+      agentCatalog = subscribeAgents(paseo, {
+        onSnapshot: (entries, restored) => {
+          if (stopped) return;
+          const ids = new Set(entries.map((agent) => agent.id));
+          for (const id of catalog.agents.keys()) if (!ids.has(id)) {
+            bump(id); catalog.remove(id); retireAgent(id, restored);
+          }
+          for (const agent of entries) applyAgent(agent, restored);
+        },
+        onUpdate: (update) => {
+          if (stopped) return;
+          if (update.kind === 'upsert') applyAgent(update.agent);
+          else { bump(update.agentId); catalog.remove(update.agentId); retireAgent(update.agentId); }
+        },
+        onError: (error) => {
+          for (const [id, state] of agents) { needsReconcile.add(id); markUsageGap(state); }
+          checkpoint();
+          console.error('token-ledger: agent catalog failed', error);
+        },
+      });
+      await agentCatalog.ready;
       // A checkpoint can outlive an archived/deleted agent. After a complete
       // catalog read, remaining recovered turns cannot still be active here.
       for (const id of recovered) {
@@ -182,14 +216,14 @@ export function ensureTracker(paseo: PaseoApi): Promise<void> {
         persist(record);
       }
       recovered.clear();
-      listing = false;
-      changed.clear();
-      await Promise.all([...subscriptions.values()].map((subscription) => subscription.ready));
+      await Promise.allSettled([...catalog.agents.values()].filter((agent) => agent.status !== 'closed' && !agent.archivedAt)
+        .map((agent) => subscriptions!.watch(agent.id)));
       console.log(`token-ledger: tracking ${subscriptions.size} agent(s)`);
     } catch (error) {
-      unsubscribeAgents?.();
-      unsubscribeAgents = null;
-      for (const id of subscriptions.keys()) unwatchAgent(id);
+      await agentCatalog?.release();
+      agentCatalog = null;
+      await subscriptions?.dispose();
+      subscriptions = null;
       throw error;
     }
   })().catch((error) => { startPromise = null; throw error; });
@@ -198,20 +232,16 @@ export function ensureTracker(paseo: PaseoApi): Promise<void> {
 export function stopTracker(): Promise<void> {
   stopped = true;
   stopPromise ??= (async () => {
-    unsubscribeAgents?.();
-    unsubscribeAgents = null;
-    catalog.dispose();
-    for (const id of subscriptions.keys()) unwatchAgent(id);
+    await agentCatalog?.release();
+    agentCatalog = null;
+    await subscriptions?.dispose();
+    await catalog.dispose();
     if (checkpointTimer) clearTimeout(checkpointTimer);
     for (const pending of [...terminalTimers.values()]) { clearTimeout(pending.timer); pending.settle(); }
     await persistence.catch(() => undefined);
     await drainRecords();
     await flushStore();
     await publisher.flush();
-    // 0.8 schedules remote subscription updates from synchronous removers.
-    // Round-trip on the same transport before the host closes it, allowing
-    // those queued updates to settle instead of logging "Daemon client closed".
-    await trackerApi?.agents.list({ page: { limit: 1 } }).catch(() => undefined);
   })();
   return stopPromise;
 }
@@ -222,32 +252,39 @@ function inFlightFor(agentId: string): InFlight | null {
   if (!open) return null;
   const semantics = usageSemantics(open.provider, open.model);
   let input: number | null = null;
+  let rawInput: number | null = null;
   let cached: number | null = null;
+  let cacheWrite: number | null = null;
   let output: number | null = null;
   const observations = providerSemantics(open.provider).tokens === "request" ? open.observations : open.observations.slice(-1);
   for (const observation of observations) {
-    const fresh = freshInput(semantics, observation.input, observation.cached);
+    const fresh = freshInput(semantics, observation.input, observation.cached, observation.cacheWrite);
+    if (observation.input !== null) rawInput = (rawInput ?? 0) + observation.input;
     if (fresh !== null) input = (input ?? 0) + fresh;
     if (observation.cached !== null) cached = (cached ?? 0) + observation.cached;
+    if (observation.cacheWrite != null) cacheWrite = (cacheWrite ?? 0) + observation.cacheWrite;
     if (observation.output !== null) output = (output ?? 0) + observation.output;
   }
   const usage = open.lastUsage;
   const estimated = estimateUsageCost({
     provider: open.provider,
     model: open.model,
-    input,
+    input: rawInput,
     cached,
+    cacheWrite,
     output,
     ...(providerSemantics(open.provider).tokens === "request"
-      ? { requests: open.observations.map(({ input, cached, output }) => ({ input, cached, output })) }
+      ? { requests: open.observations.map(({ cost, ...tokens }) => tokens) }
       : {}),
   });
   return {
+    ...(open.usageGap ? { usageGap: true } : {}),
     turnId: open.turnId,
     startedAt: open.startedAt,
     modelCalls: open.observations.length,
     input,
     cached,
+    cacheWrite,
     output,
     effectiveCostUsd: estimated.effectiveCostUsd,
     costSource: estimated.costSource,
@@ -300,6 +337,7 @@ export async function handleOverview(_input: object, context: { paseo: PaseoApi 
     totals.turns += summary.turns;
     totals.input += summary.input;
     totals.cached += summary.cached;
+    if (summary.cacheWrite != null) totals.cacheWrite = (totals.cacheWrite ?? 0) + summary.cacheWrite;
     totals.output += summary.output;
     if (summary.costUsd !== null) totals.costUsd = (totals.costUsd ?? 0) + summary.costUsd;
     if (summary.effectiveCostUsd !== null) totals.effectiveCostUsd = (totals.effectiveCostUsd ?? 0) + summary.effectiveCostUsd;

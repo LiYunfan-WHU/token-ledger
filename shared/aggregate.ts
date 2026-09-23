@@ -1,10 +1,11 @@
 import { providerSemantics } from "./semantics.ts";
 import type { TurnRecord } from "./ledger.ts";
 
-/** Shape of Paseo's AgentUsage protocol field (all members optional upstream). */
+/** Reducer input. Paseo 0.8 exposes these fields except cacheWriteInputTokens. */
 export type UsageLike = {
   inputTokens?: number;
   cachedInputTokens?: number;
+  cacheWriteInputTokens?: number;
   outputTokens?: number;
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
@@ -14,6 +15,7 @@ export type UsageLike = {
 export type Observation = {
   input: number | null;
   cached: number | null;
+  cacheWrite?: number | null;
   output: number | null;
   cost: number | null;
 };
@@ -32,19 +34,27 @@ export function tokenObservation(usage: UsageLike | null | undefined): Observati
   const input = num(usage.inputTokens);
   const cached = num(usage.cachedInputTokens);
   const output = num(usage.outputTokens);
-  if (input === null && cached === null && output === null) return null;
-  return { input, cached, output, cost: num(usage.totalCostUsd) };
+  const cacheWrite = num(usage.cacheWriteInputTokens);
+  if (input === null && cached === null && output === null && cacheWrite === null) return null;
+  return { input, cached, output, ...(cacheWrite !== null ? { cacheWrite } : {}), cost: num(usage.totalCostUsd) };
 }
 
 export function sameTokens(a: Observation, b: Observation): boolean {
-  return a.input === b.input && a.cached === b.cached && a.output === b.output;
+  return a.input === b.input && a.cached === b.cached && a.output === b.output
+    && (a.cacheWrite == null || b.cacheWrite == null || a.cacheWrite === b.cacheWrite);
 }
 
-function sumField(observations: Observation[], field: "input" | "cached" | "output"): number | null {
+/** A snapshot and a terminal event can expose different detail for the same usage. */
+export function mergeObservation(a: Observation, b: Observation): Observation {
+  const cacheWrite = b.cacheWrite ?? a.cacheWrite;
+  return { ...a, ...b, cost: b.cost ?? a.cost, ...(cacheWrite != null ? { cacheWrite } : {}) };
+}
+
+function sumField(observations: Observation[], field: "input" | "cached" | "cacheWrite" | "output"): number | null {
   let total: number | null = null;
   for (const observation of observations) {
     const value = observation[field];
-    if (value !== null) total = (total ?? 0) + value;
+    if (value != null) total = (total ?? 0) + value;
   }
   return total;
 }
@@ -70,7 +80,11 @@ export function finalizeTurn(args: FinalizeInput): TurnRecord {
   const observations = [...args.observations];
   const final = tokenObservation(args.finalUsage);
   const semantics = providerSemantics(args.provider);
-  if (semantics.tokens === "request" && final && !observations.some((observation) => sameTokens(observation, final))) observations.push(final);
+  if (semantics.tokens === "request" && final) {
+    const index = observations.findLastIndex((observation) => sameTokens(observation, final));
+    if (index === -1) observations.push(final);
+    else observations[index] = mergeObservation(observations[index], final);
+  }
 
   let tokens: Observation;
   let source: string;
@@ -79,6 +93,7 @@ export function finalizeTurn(args: FinalizeInput): TurnRecord {
     tokens = {
       input: sumField(observations, "input"),
       cached: sumField(observations, "cached"),
+      ...(observations.some((o) => o.cacheWrite != null) ? { cacheWrite: sumField(observations, "cacheWrite") } : {}),
       output: sumField(observations, "output"),
       cost: null,
     };
@@ -122,11 +137,12 @@ export function finalizeTurn(args: FinalizeInput): TurnRecord {
     status: args.status,
     input: tokens.input,
     cached: tokens.cached,
+    ...(tokens.cacheWrite != null ? { cacheWrite: tokens.cacheWrite } : {}),
     output: tokens.output,
     costUsd,
     sessionCostUsd: rawCost,
     costScope: semantics.cost,
-    ...(semantics.tokens === "request" ? { requests: observations.map(({ input, cached, output }) => ({ input, cached, output })) } : {}),
+    ...(semantics.tokens === "request" ? { requests: observations.map(({ cost, ...tokens }) => tokens) } : {}),
     modelCalls: observations.length,
     quality,
     source,

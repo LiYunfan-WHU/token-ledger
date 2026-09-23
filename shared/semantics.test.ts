@@ -27,3 +27,9 @@ test("freshInput passes through for exclusive-input and unknown providers", () =
   assert.equal(freshInput(null, 78, 2_974_078), 78);
   assert.equal(freshInput(null, null, null), null);
 });
+
+test('cache writes are separate from fresh input only for inclusive providers', () => {
+  assert.equal(freshInput(usageSemantics('codex', null), 100, 60, 30), 10);
+  assert.equal(freshInput(usageSemantics('claude', null), 10, 60, 30), 10);
+  assert.equal(freshInput(null, 100, 60, 30), 100);
+});

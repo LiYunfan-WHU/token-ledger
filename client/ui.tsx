@@ -63,9 +63,9 @@ export function statusColor(status: TurnRecord["status"], theme: PluginTheme): s
   return theme.colors.statusWarning;
 }
 
-export function tokensLine(input: number | null, cached: number | null, output: number | null): string | null {
-  if (input === null && cached === null && output === null) return null;
-  return `in ${fmtTokens(input)} · cache ${fmtTokens(cached)} · out ${fmtTokens(output)}`;
+export function tokensLine(input: number | null, cached: number | null, output: number | null, cacheWrite?: number | null): string | null {
+  if (input === null && cached === null && output === null && cacheWrite == null) return null;
+  return `in ${fmtTokens(input)} · cache ${fmtTokens(cached)}${cacheWrite != null ? ` · write ${fmtTokens(cacheWrite)}` : ''} · out ${fmtTokens(output)}`;
 }
 
 /** Column widths for the TURNS table; shared by the header and data rows. */
@@ -120,8 +120,17 @@ export function SummaryRow({ summary, theme, dense }: { summary: Summary; theme:
       <Stat label="turns" value={String(summary.turns)} theme={theme} dense={dense} />
       <Stat label="input" value={fmtTokens(summary.input)} theme={theme} dense={dense} />
       <Stat label="cache" value={fmtTokens(summary.cached)} theme={theme} dense={dense} />
+      {summary.cacheWrite != null ? <Stat label="cache write" value={fmtTokens(summary.cacheWrite)} theme={theme} dense={dense} /> : null}
       <Stat label="output" value={fmtTokens(summary.output)} theme={theme} dense={dense} />
       {costValue ? <Stat label={costLabel} value={costValue} theme={theme} dense={dense} /> : null}
     </View>
+  );
+}
+
+export function UsageCoverageNote({ theme }: { theme: PluginTheme }) {
+  return (
+    <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+      Totals reflect usage available from Paseo; subagent usage and cache writes may be missing.
+    </Text>
   );
 }

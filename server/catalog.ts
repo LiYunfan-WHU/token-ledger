@@ -1,57 +1,53 @@
-import type { PaseoAgent, PaseoApi } from '@getpaseo/client';
+import type { PaseoAgent, PaseoApi, PaseoWorkspace, PaseoWorkspaceListResult, PaseoWorkspaceUpdate } from '@getpaseo/client';
+import type { SessionOutboundMessage } from '@getpaseo/protocol/messages';
+import { subscribeCatalog, type CatalogSubscription } from '../shared/catalog-subscription.ts';
 
-type Metadata = Pick<PaseoAgent, 'id' | 'workspaceId' | 'title' | 'provider' | 'model' | 'status' | 'updatedAt'>;
+type Metadata = Pick<PaseoAgent, 'id' | 'workspaceId' | 'title' | 'provider' | 'model' | 'status' | 'updatedAt' | 'archivedAt'>;
 
 /** Metadata only: live usage belongs to the tracker, not the overview catalog. */
 export class Catalog {
   readonly agents = new Map<string, Metadata>();
   readonly workspaceNames = new Map<string, string>();
-  private loading: Promise<void> | null = null;
-  private unsubscribe: (() => void) | null = null;
+  private subscription: CatalogSubscription | null = null;
   private disposed = false;
 
   note(agent: PaseoAgent): void {
-    const { id, workspaceId, title, provider, model, status, updatedAt } = agent;
-    this.agents.set(id, { id, workspaceId, title, provider, model, status, updatedAt });
+    const { id, workspaceId, title, provider, model, status, updatedAt, archivedAt } = agent;
+    this.agents.set(id, { id, workspaceId, title, provider, model, status, updatedAt, archivedAt });
   }
   remove(id: string): void { this.agents.delete(id); }
 
   ensureWorkspaces(paseo: PaseoApi): Promise<void> {
     if (this.disposed) return Promise.resolve();
-    this.loading ??= (async () => {
-      const changed = new Set<string>();
-      let listing = true;
-      this.unsubscribe = paseo.workspaces.subscribe((update) => {
+    this.subscription ??= subscribeCatalog<PaseoWorkspace, PaseoWorkspaceListResult, PaseoWorkspaceUpdate>({
+      open: () => paseo.workspaces.list({ subscribe: {}, page: { limit: 200 } }),
+      next: (cursor) => paseo.workspaces.list({ page: { limit: 200, cursor } }),
+      entries: (page) => page.entries,
+      id: (workspace) => workspace.id,
+      update: (value) => {
+        const message = value as SessionOutboundMessage;
+        if (message.type !== 'workspace_update') return null;
+        const update = message.payload;
+        return update.kind === 'upsert' ? { id: update.workspace.id, item: update.workspace, value: update }
+          : { id: update.id, item: null, value: update };
+      },
+      onSnapshot: (workspaces) => {
+        this.workspaceNames.clear();
+        for (const w of workspaces) this.workspaceNames.set(w.id, w.title ?? w.name);
+      },
+      onUpdate: (update) => {
         if (update.kind === 'upsert') {
           const w = update.workspace;
-          if (listing) changed.add(w.id);
           this.workspaceNames.set(w.id, w.title ?? w.name);
         } else {
-          if (listing) changed.add(update.id);
           this.workspaceNames.delete(update.id);
         }
-      });
-      let cursor: string | undefined;
-      const seen = new Set<string>();
-      do {
-        const page = await paseo.workspaces.list({
-          ...(!cursor ? { subscribe: { subscriptionId: 'token-ledger-workspaces' } } : {}),
-          page: { limit: 200, ...(cursor ? { cursor } : {}) },
-        });
-        if (this.disposed) return;
-        for (const w of page.entries) if (!changed.has(w.id)) this.workspaceNames.set(w.id, w.title ?? w.name);
-        cursor = page.pageInfo.nextCursor ?? undefined;
-        if (cursor && seen.has(cursor)) throw new Error('Repeated workspace pagination cursor');
-        if (cursor) seen.add(cursor);
-      } while (cursor);
-      listing = false;
-      changed.clear();
-    })().catch((error) => {
-      this.unsubscribe?.(); this.unsubscribe = null; this.loading = null;
-      console.error('token-ledger: workspace catalog failed', error);
+      },
+      onError: (error) => console.error('token-ledger: workspace catalog failed', error),
     });
-    return this.loading;
+    this.subscription.ensure();
+    return this.subscription.ready.catch(() => {});
   }
 
-  dispose(): void { this.disposed = true; this.unsubscribe?.(); this.unsubscribe = null; }
+  async dispose(): Promise<void> { this.disposed = true; await this.subscription?.release(); this.subscription = null; }
 }

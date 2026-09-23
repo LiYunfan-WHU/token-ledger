@@ -7,8 +7,9 @@
  *
  * The ledger stores values exactly as reported (so history can always be
  * reinterpreted) and normalizes at read time to the canonical form that loses
- * no information: input = fresh uncached prompt tokens, cached = cache reads.
- * Inclusive-input providers are converted (input − cached); the reverse
+ * no information: input = ordinary input, cached = cache reads, cacheWrite =
+ * cache creation when reported. Inclusive-input providers are converted
+ * (input − cached − known writes); the reverse
  * direction would be unrecoverable, which is why Anthropic semantics is the
  * canonical one.
  *
@@ -48,15 +49,16 @@ export function usageSemantics(provider: string | null, model: string | null): U
 }
 
 /**
- * Canonical fresh-input count for a single observation or record: subtracts
- * cache reads when the provider counts them inside inputTokens, passes the
+ * Canonical ordinary-input count for a single observation or record: subtracts
+ * reads and known writes when the provider counts them inside inputTokens, passes the
  * value through otherwise (including unknown semantics).
  */
 export function freshInput(
   semantics: UsageSemantics | null,
   input: number | null,
   cached: number | null,
+  cacheWrite?: number | null,
 ): number | null {
   if (!semantics?.inputIncludesCached || input === null) return input;
-  return Math.max(0, input - (cached ?? 0));
+  return Math.max(0, input - (cached ?? 0) - (cacheWrite ?? 0));
 }

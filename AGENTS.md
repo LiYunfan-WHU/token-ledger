@@ -1,6 +1,6 @@
 # AGENTS.md — 开发调试速查
 
-TokenLedger 是 Paseo v0.8 插件（id `token-ledger`）。**若存在 `AGENTS.local.md`（gitignore，本机专用），先读它——本机路径、工具链怪癖、测试 provider、账号事项都在那里，其内容优先于本文件。**
+TokenLedger 当前面向 Paseo v0.9.1–0.9.x（id `token-ledger`，SDK 固定 0.9.1）。**若存在 `AGENTS.local.md`（gitignore，本机专用），先读它——本机路径、工具链怪癖、测试 provider、账号事项都在那里，其内容优先于本文件。**
 
 ## 开发循环
 
@@ -25,7 +25,7 @@ paseo agent archive <id>                                  # 测完归档，别�
 
 ## 架构要点（从 daemon 源码验证过，别只信官方文档）
 
-- 0.8 必须分离入口：`index.client.tsx` / `index.server.ts`，代码分别放 `client/`、`server/`、`shared/`。文件后缀不再划分边界；禁止跨端 import。manifest 声明 `requirements.paseo: ">=0.8.0 <0.9.0"`，SDK 固定 0.8.0。
+- 自 0.8 起必须分离入口：`index.client.tsx` / `index.server.ts`，代码分别放 `client/`、`server/`、`shared/`。文件后缀不再划分边界；禁止跨端 import。当前 manifest 声明 `requirements.paseo: ">=0.9.1 <0.10.0"`。
 - 服务端 contribute 拿到 `handle/on/before`，`paseo` 在 RPC 和生命周期回调中提供。`before(agent.session_open)` 启动订阅，`on(agent.turn_started)` 覆盖 reload 后已有会话；客户端 ensure 尽早连接已有会话。**新建 agent 在 session_open 时尚未进入目录，不能在此 refresh 新 agent。**
 - **wire 层 `agent_stream` 没有 `usage_updated`**：轮中 usage 走 `agent_update` upsert 快照（`lastUsage`/`activeTurn`），且必须先 `paseo.agents.list({ subscribe: {} })` 才会推送。turn 生命周期（started/completed/failed/canceled + turnId + 轮末 usage）走 `agents.ref(id).timeline.subscribe`。
 - usage 语义（2026-09-04 实测）：Claude 轮末 usage 是**逐轮**汇总、`totalCostUsd` 是**会话累计**（所以记录里存 delta + raw 两份）；Codex 每次模型请求报一次 `last` 值，多请求轮靠去重求和。快照会把上一轮旧 usage 回放进新一轮——tracker 用 agent 级 `lastObservation` 基线挡掉。
@@ -51,6 +51,15 @@ paseo agent archive <id>                                  # 测完归档，别�
 - `providerSemantics` 只按已验证 harness 匹配：Claude whole-turn + session cost；Codex request observations；未知取最新观察且标 partial，原始费用保留但不推断累计差值。model fallback 仅用于 input/cache 口径。
 - 新 Codex 记录的 requests 保留原始逐请求 token，用于逐请求价格档位；旧记录没有请求明细，只能近似。pricing.json 最后档必须无上限，档位递增；运行时重新读取无效文件会保留上一份有效价格。
 - Timeline 使用 append + addTimelineRenderer：先落盘、每轮一次、稳定 ID、最多重试一次。不要高频更新或全历史回填；append 会改变 agent.updatedAt，且 plugin rows 不保证 daemon 重启后保留。JSONL 是权威账本。
+
+## 0.9.1 适配约束
+
+- `agents.list` / `workspaces.list` 使用 `subscribe: {}`，禁止传自定义 `subscriptionId`；类型检查不一定报错，但真实 SDK 会拒绝。保存返回的 `OwnedSubscription`，cleanup 必须 await `release()`。不要 dispose 宿主借给插件的整个 `PaseoApi`。
+- `shared/catalog-subscription.ts` 接管完整分页快照和恢复快照，并让分页期间的实时 upsert/remove 覆盖旧值。SDK 的 `agents.subscribe` 只转发实时更新，不转发重连快照。新客户端代码不能只靠那个回调重建目录。
+- `server/subscriptions.ts` 处理 Timeline 的 `subscription_restored` / `error`；`ready` 只代表首次建立，不能发现已建立后的失败。迟到回调不能清理替换后的句柄；关闭和归档必须停止重试。
+- 断线缺口落 `usageGap`，缺失终态记 `unknown`。跨缺口的 session 累计费用只存 raw，不强行归入当前轮；缺口和基线状态随 journal 恢复。不要给恢复记录补发 Timeline。
+- `shared/preferences.ts` 定义宿主原生设置，`server/preferences.ts` 读取并订阅；客户端用 `useSettings`。设置读回与通知有竞态，迟到 read 不能覆盖更新值。价格配置 revision 必须使 read-model 失效。
+- 0.9.1 仍未公开 cache-write 和 provider 内部子代理 usage；不要把本地结构支持写成上游已经提供数据。标准模型价格需精确匹配，未知新版本或 Fast/Batch 后缀不能套用旧模型回退价。
 
 ## 发布
 

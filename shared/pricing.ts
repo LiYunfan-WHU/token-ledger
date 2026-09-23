@@ -3,30 +3,52 @@
  * reports a total costUsd, never per-component costs, so the split shown in
  * the UI is an estimate: token counts × list price. When a real total exists,
  * the difference between it and the estimate is surfaced as `otherUsd` rather
- * than smeared across the components — for Claude turns that residual is
- * mostly cache writes, which Paseo drops from AgentUsage (its Claude provider
- * only maps cache_read_input_tokens; cache creation is billed at 1.25× the
- * input price but never reported as tokens).
+ * than smeared across the components. Missing upstream usage (including
+ * cache writes in Paseo 0.8) can contribute to that residual.
  *
- * Prices are $/MTok. Cache read is billed at 0.1× the input price.
+ * Prices are $/MTok. Cache write is independent of the input/read rates;
+ * neither cache lifetime nor a provider's write premium is inferred.
  */
 export type ModelPricing = {
   input: number;
   cacheRead: number;
+  /** Omitted in older price files; writes then use the ordinary input rate. */
+  cacheWrite?: number;
   output: number;
 };
 
+// Standard-mode list prices verified 2026-09-23:
+// https://platform.claude.com/docs/en/about-claude/pricing
+// Explicit versions prevent new models or Fast/Batch suffixes inheriting old rates.
 const PRICING_TABLE: Array<[RegExp, ModelPricing]> = [
-  [/fable-5|mythos/i, { input: 10, cacheRead: 1.0, output: 50 }],
-  [/opus/i, { input: 5, cacheRead: 0.5, output: 25 }],
-  [/sonnet/i, { input: 3, cacheRead: 0.3, output: 15 }],
-  [/haiku/i, { input: 1, cacheRead: 0.1, output: 5 }],
+  [/^claude-(?:fable|mythos)-5-1$/, { input: 10, cacheRead: 0.25, output: 50 }],
+  [/^claude-(?:fable|mythos)-5$/, { input: 10, cacheRead: 1, output: 50 }],
+  [/^claude-opus-5-5$/, { input: 4, cacheRead: 0.2, cacheWrite: 5, output: 20 }],
+  [/^claude-opus-(?:5|4-[5-8])$/, { input: 5, cacheRead: 0.5, output: 25 }],
+  [/^claude-opus-4(?:-1)?$/, { input: 15, cacheRead: 1.5, output: 75 }],
+  [/^claude-sonnet-5$/, { input: 2, cacheRead: 0.2, output: 10 }],
+  [/^claude-sonnet-4(?:-[56])?$/, { input: 3, cacheRead: 0.3, output: 15 }],
+  [/^claude-haiku-4-5$/, { input: 1, cacheRead: 0.1, output: 5 }],
+  [/^claude-haiku-3-5$/, { input: 0.8, cacheRead: 0.08, output: 4 }],
 ];
+
+export function canonicalModel(value: string): string {
+  let model = value.trim().toLowerCase();
+  if (model.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(model);
+      if (Array.isArray(parsed) && typeof parsed.at(-1) === 'string') model = parsed.at(-1);
+    } catch {}
+  }
+  model = model.split('/').at(-1) ?? model;
+  return model.replace(/\[1m\]$/i, '').replace(/[._]/g, '-').replace(/-+/g, '-');
+}
 
 export function modelPricing(model: string | null): ModelPricing | null {
   if (!model) return null;
+  const canonical = canonicalModel(model).replace(/-\d{8}$/, '');
   for (const [pattern, pricing] of PRICING_TABLE) {
-    if (pattern.test(model)) return pricing;
+    if (pattern.test(canonical)) return pricing;
   }
   return null;
 }
@@ -34,9 +56,10 @@ export function modelPricing(model: string | null): ModelPricing | null {
 export type CostBreakdown = {
   inUsd: number;
   cacheUsd: number;
+  cacheWriteUsd?: number;
   outUsd: number;
   /**
-   * costUsd minus the list-price estimate of the three components; null when
+   * costUsd minus the list-price estimate of the known components; null when
    * no real total was reported. Positive residual is cost the reported token
    * counts can't account for (chiefly cache writes on Claude); a small
    * negative residual just means the hardcoded list prices overestimate.
@@ -56,40 +79,37 @@ export function costBreakdown(turn: {
   model: string | null;
   input: number | null;
   cached: number | null;
+  cacheWrite?: number | null;
   output: number | null;
   costUsd: number | null;
 }): CostBreakdown | null {
   const pricing = modelPricing(turn.model);
   if (!pricing) return null;
-  if (turn.input === null && turn.cached === null && turn.output === null) return null;
-  const inUsd = ((turn.input ?? 0) * pricing.input) / PER_MTOK;
-  const cacheUsd = ((turn.cached ?? 0) * pricing.cacheRead) / PER_MTOK;
-  const outUsd = ((turn.output ?? 0) * pricing.output) / PER_MTOK;
-  const otherUsd = turn.costUsd !== null ? turn.costUsd - (inUsd + cacheUsd + outUsd) : null;
-  return { inUsd, cacheUsd, outUsd, otherUsd };
+  return costBreakdownWithPricing(turn, pricing);
 }
 
 /** Computes a breakdown with pricing selected by the server. */
 export function costBreakdownWithPricing(
-  turn: { input: number | null; cached: number | null; output: number | null; costUsd: number | null },
+  turn: { input: number | null; cached: number | null; cacheWrite?: number | null; output: number | null; costUsd: number | null },
   pricing: ModelPricing,
 ): CostBreakdown | null {
-  if (turn.input === null && turn.cached === null && turn.output === null) return null;
+  if (turn.input === null && turn.cached === null && turn.output === null && turn.cacheWrite == null) return null;
   const inUsd = ((turn.input ?? 0) * pricing.input) / PER_MTOK;
   const cacheUsd = ((turn.cached ?? 0) * pricing.cacheRead) / PER_MTOK;
+  const cacheWriteUsd = ((turn.cacheWrite ?? 0) * (pricing.cacheWrite ?? pricing.input)) / PER_MTOK;
   const outUsd = ((turn.output ?? 0) * pricing.output) / PER_MTOK;
-  const otherUsd = turn.costUsd !== null ? turn.costUsd - (inUsd + cacheUsd + outUsd) : null;
-  return { inUsd, cacheUsd, outUsd, otherUsd };
+  const otherUsd = turn.costUsd !== null ? turn.costUsd - (inUsd + cacheUsd + cacheWriteUsd + outUsd) : null;
+  return { inUsd, cacheUsd, ...(turn.cacheWrite != null ? { cacheWriteUsd } : {}), outUsd, otherUsd };
 }
 
 /**
- * Share of prompt tokens served from cache: cached / (input + cached).
+ * Share of prompt tokens served from cache: cached / (input + cached + writes).
  * Expects input in canonical fresh-token form (see semantics.ts) — the server
  * normalizes inclusive-input providers before values reach clients.
  */
-export function cacheRatio(input: number | null, cached: number | null): number | null {
+export function cacheRatio(input: number | null, cached: number | null, cacheWrite?: number | null): number | null {
   if (cached === null) return null;
-  const prompt = (input ?? 0) + cached;
+  const prompt = (input ?? 0) + cached + (cacheWrite ?? 0);
   if (prompt <= 0) return null;
   return cached / prompt;
 }

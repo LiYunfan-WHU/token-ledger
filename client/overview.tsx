@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { useOverview } from "./data.ts";
 import { Pressable, Text, View } from "react-native";
 import type { AgentUsageRow } from "../shared/ledger.ts";
-import { fmtCost, fmtTime, fmtTokens, SummaryRow } from "./ui.tsx";
+import { fmtCost, fmtTime, fmtTokens, SummaryRow, UsageCoverageNote } from "./ui.tsx";
 
 
 function agentStatusColor(row: AgentUsageRow, theme: PluginTheme): string {
@@ -27,7 +27,7 @@ function AgentRow({
 }) {
   const rawCost = fmtCost(row.summary.effectiveCostUsd);
   const cost = rawCost ? `${row.summary.estimatedTurns > 0 ? "≈" : ""}${rawCost}` : null;
-  const totalTokens = row.summary.input + row.summary.cached + row.summary.output;
+  const totalTokens = row.summary.input + row.summary.cached + (row.summary.cacheWrite ?? 0) + row.summary.output;
   const name = row.title ?? row.agentId.slice(0, 8);
   const meta = [row.model ?? row.provider, row.lastActivityAt ? fmtTime(row.lastActivityAt) : null]
     .filter(Boolean)
@@ -99,6 +99,7 @@ export function TokenLedgerOverview({ theme, layout, navigation }: PluginSurface
           <View style={{ gap: 8 }}>
             <Text style={styles.sectionLabel}>All sessions</Text>
             <SummaryRow summary={data.totals} theme={theme} dense={dense} />
+            <UsageCoverageNote theme={theme} />
           </View>
           {data.groups.length === 0 ? (
             <Text style={styles.muted}>No usage recorded yet.</Text>

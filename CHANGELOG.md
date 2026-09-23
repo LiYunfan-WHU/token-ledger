@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.6.0 (2026-09-23) — Paseo 0.9.1 compatibility and recovery
+
+Requires Paseo **0.9.1–0.9.x** on both the daemon and the app. Paseo 0.8 users should stay on `v0.5.1`; existing ledger records and custom prices remain compatible. See the [release and upgrade notes](docs/releases/v0.6.0.md).
+
+- Target Paseo 0.9.1–0.9.x and pin all Paseo SDK packages to 0.9.1. Replace fixed catalog subscription IDs with host-assigned handles, reconcile restored paginated snapshots, and await subscription release on cleanup.
+- Recover from post-establishment timeline errors with bounded retries. Preserve delivery gaps through checkpoints, mark missing terminal outcomes as unknown, and avoid attributing cumulative costs across unobserved turns.
+- Add host-scoped native settings for Timeline summaries, OpenRouter/built-in reference pricing, and active/idle polling frequency. Settings changes invalidate enriched pricing without rewriting ledger history.
+- Show the current turn's estimated cost in the in-flight card and include it in the composer pill's running total, with an explicit approximation mark.
+- Verify standard Claude model prices against Anthropic's 2026-09-23 price table, including Opus 5.5; match explicit model versions so unverified models or Fast/Batch suffixes do not inherit older prices. Custom prices and reported costs retain priority.
+- Add plugin metadata and document Paseo 0.9 update commands. Cache-write and provider-internal descendant usage gaps remain in Paseo 0.9.1.
+- Add optional cache-write counts throughout aggregation, checkpoints, ledger records, RPCs, and UI, with an independent `cacheWrite` price and OpenRouter cache-write price ingestion. Keep old records/prices compatible and reported costs authoritative.
+- Separate known writes from inclusive input, include them in prompt-size tiers and cache ratios, and preserve richer observations when another channel omits write detail. Pass raw usage into live cost estimation to avoid normalizing input twice.
+- Document the public API gaps for cache writes and provider-internal subagents, rechecked on Paseo 0.9.1, with upstream requirements for complete usage, lineage, request identity, and cost scope. These missing usage streams are not recovered by this release.
+
 ## v0.5.1 (2026-09-16) — iOS plugin loading fix
 
 - Fix iOS plugin activation: replace the client-side `PanelPlacement` class with a closure factory so the dynamically loaded bundle avoids Hermes-incompatible class syntax.
