@@ -36,7 +36,7 @@ Per-turn LLM token usage and cost for [Paseo](https://paseo.sh) agents — an ag
 
 ## Compatibility
 
-TokenLedger **v0.6.1** targets **Paseo 0.9.1–0.9.x**, on both the daemon and the app. Paseo 0.8 users should stay on `v0.5.1`; Paseo 0.7 users should stay on `v0.3.1`. Existing `ledger.jsonl` records remain readable; no migration or deletion is required. See the [v0.6.0 release notes](docs/releases/v0.6.0.md) for the 0.9.1 migration details.
+TokenLedger **v0.6.2** targets **Paseo 0.9.1–0.9.x**, on both the daemon and the app. Paseo 0.8 users should stay on `v0.5.1`; Paseo 0.7 users should stay on `v0.3.1`. Existing `ledger.jsonl` records remain readable; no migration or deletion is required. See the [v0.6.0 release notes](docs/releases/v0.6.0.md) for the 0.9.1 migration details.
 
 ## Install
 
@@ -51,7 +51,7 @@ Or paste `npm:paseo-token-ledger` into **Settings → Plugins → Plugin source*
 To install a tagged release from GitHub instead:
 
 ```bash
-paseo plugin add stv1024/token-ledger --ref v0.6.1
+paseo plugin add stv1024/token-ledger --ref v0.6.2
 ```
 
 Inspect or apply updates with:

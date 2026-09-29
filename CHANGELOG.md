@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.2 (2026-09-29) — fix npm installation
+
+- Fix `paseo plugin install npm:paseo-token-ledger` failing with `Could not resolve type dependency "@getpaseo/client"`. Paseo resolves type-only imports at install time and npm installations omit devDependencies, so `@getpaseo/client` and `@getpaseo/protocol` are now runtime `dependencies` (type-only; nothing is bundled). Plugin behavior is unchanged. Use 0.6.2 or later from npm; 0.6.1 is deprecated there.
+
 ## v0.6.1 (2026-09-29) — npm and paseo.cafe distribution
 
 Plugin behavior is unchanged from v0.6.0; still requires Paseo **0.9.1–0.9.x**.
