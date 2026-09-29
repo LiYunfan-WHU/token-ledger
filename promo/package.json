@@ -1,0 +1,32 @@
+{
+  "name": "token-ledger-promo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio",
+    "audio": "node audio/synth.mjs && node audio/voice.mjs",
+    "render": "npm run audio && remotion render Promo out/token-ledger-promo.mp4",
+    "stills": "remotion still Promo out/frame-090.png --frame=90 && remotion still Promo out/frame-300.png --frame=300 && remotion still Promo out/frame-540.png --frame=540",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/unbounded": "5.3.0",
+    "@react-three/fiber": "9.3.0",
+    "@react-three/postprocessing": "3.0.4",
+    "@remotion/cli": "4.0.529",
+    "@remotion/three": "4.0.529",
+    "postprocessing": "6.37.8",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.529",
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "@types/react": "19.1.12",
+    "@types/three": "0.180.0",
+    "typescript": "5.9.3"
+  }
+}

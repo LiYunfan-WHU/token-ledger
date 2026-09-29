@@ -5,6 +5,14 @@ Per-turn LLM token usage and cost for [Paseo](https://paseo.sh) agents — an ag
 一个为 Paseo 提供**按轮（agent turn）**统计 token 用量的插件：面板实时显示进行中一轮的状态，每轮结束后固化一条账目，历史保存在本机。
 
 <p align="center">
+  <a href="https://github.com/stv1024/token-ledger/releases/download/v0.6.0/token-ledger-promo.mp4">
+    <img src="docs/promo-poster.jpg" alt="TokenLedger promo video (20 s) — click to play" width="720">
+  </a>
+  <br>
+  <sub>▶ 20-second promo · <a href="promo/">source</a></sub>
+</p>
+
+<p align="center">
   <img src="docs/screenshot-panel.png" alt="TokenLedger per-agent panel: session summary (turns, input/cache/output tokens, cost), context-window bar, and a per-turn history table" width="560">
 </p>
 

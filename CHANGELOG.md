@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add a 20-second promo video (linked from the README, attached to the v0.6.0 release) and its reproducible Remotion source in `promo/`. The plugin itself is unchanged.
+
 ## v0.6.0 (2026-09-23) — Paseo 0.9.1 compatibility and recovery
 
 Requires Paseo **0.9.1–0.9.x** on both the daemon and the app. Paseo 0.8 users should stay on `v0.5.1`; existing ledger records and custom prices remain compatible. See the [release and upgrade notes](docs/releases/v0.6.0.md).

@@ -1,0 +1,12 @@
+{
+  "voice": "en-US-AriaNeural",
+  "rate": "+8%",
+  "pitch": "-4Hz",
+  "lines": [
+    { "id": "01-intro", "from": 22, "slot": 92, "text": "Every token, accounted for." },
+    { "id": "02-live", "from": 124, "slot": 84, "text": "Live, per turn." },
+    { "id": "03-grid", "from": 280, "slot": 80, "text": "Input, cache, output, cost." },
+    { "id": "04-run", "from": 400, "slot": 80, "text": "See the whole run." },
+    { "id": "05-outro", "from": 496, "slot": 100, "text": "Token Ledger. Know where every token went." }
+  ]
+}
