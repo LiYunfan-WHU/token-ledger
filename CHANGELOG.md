@@ -1,8 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.6.1 (2026-09-29) — npm and paseo.cafe distribution
 
-- Add a 20-second promo video (linked from the README, attached to the v0.6.0 release) and its reproducible Remotion source in `promo/`. The plugin itself is unchanged.
+Plugin behavior is unchanged from v0.6.0; still requires Paseo **0.9.1–0.9.x**.
+
+- Publish on npm as `paseo-token-ledger` (`paseo plugin install npm:paseo-token-ledger`) and list on [paseo.cafe](https://paseo.cafe/plugins/token-ledger). The package ships only the plugin sources (`paseo-plugin.json`, entries, `client/`, `server/`, `shared/`), without tests.
+- Add package metadata (description, license, repository, keywords); move README screenshots to `images/`; add a Limitations section to the README.
+- Add a 20-second promo video (linked from the README, attached to the v0.6.0 release) and its reproducible Remotion source in `promo/`.
 
 ## v0.6.0 (2026-09-23) — Paseo 0.9.1 compatibility and recovery
 

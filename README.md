@@ -13,7 +13,7 @@ Per-turn LLM token usage and cost for [Paseo](https://paseo.sh) agents — an ag
 </p>
 
 <p align="center">
-  <img src="docs/screenshot-panel.png" alt="TokenLedger per-agent panel: session summary (turns, input/cache/output tokens, cost), context-window bar, and a per-turn history table" width="560">
+  <img src="images/screenshot-panel.png" alt="TokenLedger per-agent panel: session summary (turns, input/cache/output tokens, cost), context-window bar, and a per-turn history table" width="560">
 </p>
 
 ## What it shows
@@ -27,7 +27,7 @@ Per-turn LLM token usage and cost for [Paseo](https://paseo.sh) agents — an ag
 **Composer pill** — every live agent gets a compact pill next to its composer (`$0.43 · ctx 47%`, with an activity icon while a turn is running). The total includes the current turn's estimated cost when available and uses `≈` whenever estimates contribute. Pressing it opens that agent's panel. With split views, each session carries its own pill, so the session↔usage binding is always visible.
 
 <p align="center">
-  <img src="docs/screenshot-pill.jpg" alt="TokenLedger composer pill showing cost and context usage next to the composer; pressing it opens the panel" width="560">
+  <img src="images/screenshot-pill.jpg" alt="TokenLedger composer pill showing cost and context usage next to the composer; pressing it opens the panel" width="560">
 </p>
 
 **Overview** (sidebar → TokenLedger) — all sessions in one place: grand totals, then per-agent rows grouped by workspace with live-turn indicator, last activity, cost/tokens, and turn count. Tapping a row jumps to that agent.
@@ -36,24 +36,32 @@ Per-turn LLM token usage and cost for [Paseo](https://paseo.sh) agents — an ag
 
 ## Compatibility
 
-TokenLedger **v0.6.0** targets **Paseo 0.9.1–0.9.x**, on both the daemon and the app. Paseo 0.8 users should stay on `v0.5.1`; Paseo 0.7 users should stay on `v0.3.1`. Existing `ledger.jsonl` records remain readable; no migration or deletion is required. See the [v0.6.0 release notes](docs/releases/v0.6.0.md) for changes and validation details.
+TokenLedger **v0.6.1** targets **Paseo 0.9.1–0.9.x**, on both the daemon and the app. Paseo 0.8 users should stay on `v0.5.1`; Paseo 0.7 users should stay on `v0.3.1`. Existing `ledger.jsonl` records remain readable; no migration or deletion is required. See the [v0.6.0 release notes](docs/releases/v0.6.0.md) for the 0.9.1 migration details.
 
 ## Install
 
-Install a published compatible release from GitHub:
+Install the published npm package (Paseo 0.9):
 
 ```bash
-paseo plugin add stv1024/token-ledger --ref v0.6.0
+paseo plugin install npm:paseo-token-ledger
 ```
 
-On Paseo 0.9, inspect or choose an update with:
+Or paste `npm:paseo-token-ledger` into **Settings → Plugins → Plugin source**. The plugin is also listed on [paseo.cafe](https://paseo.cafe/plugins/token-ledger).
+
+To install a tagged release from GitHub instead:
+
+```bash
+paseo plugin add stv1024/token-ledger --ref v0.6.1
+```
+
+Inspect or apply updates with:
 
 ```bash
 paseo plugin update token-ledger --check
-paseo plugin update token-ledger --ref v0.6.0
+paseo plugin update token-ledger
 ```
 
-Install selectors do not pin future updates. Without an explicit `--ref`, Git updates follow the remote's default branch. Local development installations use `paseo plugin reload token-ledger` after source changes.
+npm installations update to the latest npm release. Git install selectors do not pin future updates: without an explicit `--ref`, Git updates follow the remote's default branch. Existing GitHub installations can keep updating from Git; switching to npm means `paseo plugin remove token-ledger` followed by the npm install (ledger data in `~/.paseo/plugins/token-ledger/` is kept). Local development installations use `paseo plugin reload token-ledger` after source changes.
 
 Update both the daemon and app to a compatible Paseo version before updating the plugin. Check `paseo plugin ls` afterward; TokenLedger should be `running`. Reopen the desktop app if an existing window still shows an older plugin UI.
 
@@ -133,6 +141,14 @@ Built-in Claude rates were checked against [Anthropic's pricing table](https://p
 - Stored locally as JSON Lines at `~/.paseo/plugins/token-ledger/ledger.jsonl` (respects `PASEO_HOME`).
 - Retention: the most recent 2,000 turns; older records are trimmed with an atomic rewrite.
 - When OpenRouter reference prices are enabled, the plugin reads the public model-price catalog and caches it for 24 hours. No usage data is sent. History does not sync between machines.
+
+## Limitations
+
+- Paseo 0.9.1 does not expose cache-write token counts; Claude cache writes are invisible in token columns (reported cost stays accurate, the gap shows as a `+$x.xx` residual).
+- Usage of provider-internal subagents is not exposed by Paseo, so session and overview totals may omit it.
+- Codex totals are summed per request and marked `partial` (`≈`); estimated costs use reference prices and may differ from your actual contract.
+- Events missed while the plugin or daemon was offline cannot be reconstructed; affected turns are marked `gap` / `unknown`.
+- Desktop and mobile UI were verified less thoroughly than the daemon side.
 
 ## Support matrix
 
