@@ -4,15 +4,26 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        paseo: ['0.9.1', '0.10.2', 'latest']
+    name: Paseo SDK ${{ matrix.paseo }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
       - run: npm ci
+      - name: Check against the selected Paseo SDK
+        if: matrix.paseo != '0.9.1'
+        run: npm install --no-save --package-lock=false @getpaseo/plugin@${{ matrix.paseo }} @getpaseo/client@${{ matrix.paseo }} @getpaseo/protocol@${{ matrix.paseo }}
       - run: npm run typecheck
       - run: npm test

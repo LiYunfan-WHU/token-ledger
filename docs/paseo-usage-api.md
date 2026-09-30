@@ -28,6 +28,10 @@ usage. The 0.9 nested-subagent hierarchy fix does not provide usage accounting.
 The plugin's 0.9.1 compatibility and subscription recovery changes do not close
 these upstream gaps.
 
+Rechecked on 2026-09-30 against the installed Paseo 0.10.2 provider source and
+published SDK: the same cache-creation and Codex child-usage gaps remain. See
+the [compatibility review](compatibility.md) for the scope of this verification.
+
 ## 1. Preserve cache creation usage
 
 `@getpaseo/protocol/dist/agent-types.d.ts`, `AgentUsage`, currently exposes

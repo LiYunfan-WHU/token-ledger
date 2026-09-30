@@ -36,11 +36,13 @@ Per-turn LLM token usage and cost for [Paseo](https://paseo.sh) agents — an ag
 
 ## Compatibility
 
-TokenLedger **v0.6.2** targets **Paseo 0.9.1–0.9.x**, on both the daemon and the app. Paseo 0.8 users should stay on `v0.5.1`; Paseo 0.7 users should stay on `v0.3.1`. Existing `ledger.jsonl` records remain readable; no migration or deletion is required. See the [v0.6.0 release notes](docs/releases/v0.6.0.md) for the 0.9.1 migration details.
+TokenLedger **v0.6.3** requires **Paseo 0.9.1 or newer**, on both the daemon and the app, without an upper version limit. Verified hosts include **0.9.1 and 0.10.2**; allowing newer versions is not a claim that every future release has been tested. SDK dependencies remain pinned to 0.9.1, with CI checks against the minimum, 0.10.2, and the latest published SDK. See the [compatibility policy and verification notes](docs/compatibility.md).
+
+Upgrade from **v0.6.2** to remove its **0.9.1–0.9.x** restriction; see the [v0.6.3 release notes](docs/releases/v0.6.3.md). Paseo 0.8 users should stay on `v0.5.1`; Paseo 0.7 users should stay on `v0.3.1`. Existing `ledger.jsonl` records remain readable; no migration or deletion is required. See the [v0.6.0 release notes](docs/releases/v0.6.0.md) for the 0.9.1 migration details.
 
 ## Install
 
-Install the published npm package (Paseo 0.9):
+Install the published npm package (Paseo 0.9.1 or newer):
 
 ```bash
 paseo plugin install npm:paseo-token-ledger
@@ -51,7 +53,7 @@ Or paste `npm:paseo-token-ledger` into **Settings → Plugins → Plugin source*
 To install a tagged release from GitHub instead:
 
 ```bash
-paseo plugin add stv1024/token-ledger --ref v0.6.2
+paseo plugin add stv1024/token-ledger --ref v0.6.3
 ```
 
 Inspect or apply updates with:

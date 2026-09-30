@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.3 (2026-09-30) — Paseo 0.10.2 compatibility
+
+- Allow Paseo `>=0.9.1` without an upper version limit. The previous `<0.10.0` ceiling prevented loading on Paseo 0.10.2 even though the APIs used by TokenLedger remain compatible. Keep SDK dependencies pinned to 0.9.1 and document tested hosts separately from the allowed range.
+- Check types and the existing test suite against the minimum SDK, 0.10.2, and the latest published SDK in CI, including a weekly check for upstream changes. See the [compatibility policy](docs/compatibility.md).
+
 ## v0.6.2 (2026-09-29) — fix npm installation
 
 - Fix `paseo plugin install npm:paseo-token-ledger` failing with `Could not resolve type dependency "@getpaseo/client"`. Paseo resolves type-only imports at install time and npm installations omit devDependencies, so `@getpaseo/client` and `@getpaseo/protocol` are now runtime `dependencies` (type-only; nothing is bundled). Plugin behavior is unchanged. Use 0.6.2 or later from npm; 0.6.1 is deprecated there.
