@@ -26,22 +26,25 @@ function fmtElapsed(startedAt: string): string {
 }
 
 function pillLabel({ summary, inFlight, ctx, records }: SyncResult): string {
+  const parts: string[] = [];
+  // Absolute wall-clock end time, not a relative age: it stays correct without
+  // a timer, so a glance after hours away still says when the last turn ended.
+  // Granularity note: the ledger tracks turns, not individual tool calls.
+  // FIRST in the label on purpose: narrow layouts (phones) ellipsize the tail,
+  // and the timestamp is the segment you do not want to lose.
+  if (inFlight) parts.push(`running ${fmtElapsed(inFlight.startedAt)}`);
+  else if (records[0]) parts.push(`done ${fmtTime(records[0].endedAt)}`);
   const combinedCost = summary.effectiveCostUsd === null && inFlight?.effectiveCostUsd == null
     ? null
     : (summary.effectiveCostUsd ?? 0) + (inFlight?.effectiveCostUsd ?? 0);
   const cost = fmtCost(combinedCost);
   const estimated = summary.estimatedTurns > 0 || inFlight?.effectiveCostUsd != null;
-  const parts = [cost
+  parts.push(cost
     ? `${estimated ? "≈" : ""}${cost}`
-    : `${fmtTokens(summary.input + summary.cached + (summary.cacheWrite ?? 0) + summary.output)} tok`];
+    : `${fmtTokens(summary.input + summary.cached + (summary.cacheWrite ?? 0) + summary.output)} tok`);
   const liveCtx = inFlight?.ctxUsed != null && inFlight.ctxMax != null
     ? { used: inFlight.ctxUsed, max: inFlight.ctxMax } : ctx;
   if (liveCtx && liveCtx.max > 0) parts.push(`ctx ${Math.round(liveCtx.used / liveCtx.max * 100)}%`);
-  // Absolute wall-clock end time, not a relative age: it stays correct without
-  // a timer, so a glance after hours away still says when the last turn ended.
-  // Granularity note: the ledger tracks turns, not individual tool calls.
-  if (inFlight) parts.push(`running ${fmtElapsed(inFlight.startedAt)}`);
-  else if (records[0]) parts.push(`done ${fmtTime(records[0].endedAt)}`);
   return parts.join(" · ");
 }
 
