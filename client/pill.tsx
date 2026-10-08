@@ -2,7 +2,7 @@
 import type { PluginButtonIconProps, PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useLedger } from "./data.ts";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { subscribeAgents } from "../shared/agents.ts";
 import { ledgerEnsure, type SyncResult } from "../shared/ledger.ts";
 import { fmtCost, fmtTime, fmtTokens } from "./ui.tsx";
@@ -25,7 +25,19 @@ function fmtElapsed(startedAt: string): string {
   return `${Math.floor(minutes / 60)}h`;
 }
 
-function pillLabel({ summary, inFlight, ctx, records }: SyncResult): string {
+/**
+ * Shorter date form for compact pills: same-day keeps `done HH:MM`; a turn
+ * that ended earlier shows `done 10/8` (open the ledger panel for the exact
+ * time) — the full `10/8 23:48` gets ellipsized on phones.
+ */
+function fmtTimeCompact(iso: string): string {
+  const date = new Date(iso);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return `done ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  return `done ${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function pillSegments({ summary, inFlight, ctx, records }: SyncResult, compact: boolean): string[] {
   const parts: string[] = [];
   // Absolute wall-clock end time, not a relative age: it stays correct without
   // a timer, so a glance after hours away still says when the last turn ended.
@@ -33,7 +45,10 @@ function pillLabel({ summary, inFlight, ctx, records }: SyncResult): string {
   // FIRST in the label on purpose: narrow layouts (phones) ellipsize the tail,
   // and the timestamp is the segment you do not want to lose.
   if (inFlight) parts.push(`running ${fmtElapsed(inFlight.startedAt)}`);
-  else if (records[0]) parts.push(`done ${fmtTime(records[0].endedAt)}`);
+  // Compact (phone) pills ellipsize, so lead with the time and keep it short:
+  // "done 18:29", or "done 10/8" when it ended on another day — the date is
+  // what matters there; open the ledger panel for the exact time.
+  else if (records[0]) parts.push(compact ? fmtTimeCompact(records[0].endedAt) : `done ${fmtTime(records[0].endedAt)}`);
   const combinedCost = summary.effectiveCostUsd === null && inFlight?.effectiveCostUsd == null
     ? null
     : (summary.effectiveCostUsd ?? 0) + (inFlight?.effectiveCostUsd ?? 0);
@@ -45,7 +60,20 @@ function pillLabel({ summary, inFlight, ctx, records }: SyncResult): string {
   const liveCtx = inFlight?.ctxUsed != null && inFlight.ctxMax != null
     ? { used: inFlight.ctxUsed, max: inFlight.ctxMax } : ctx;
   if (liveCtx && liveCtx.max > 0) parts.push(`ctx ${Math.round(liveCtx.used / liveCtx.max * 100)}%`);
-  return parts.join(" · ");
+  return parts;
+}
+
+/**
+ * Compact layouts (phones) ellipsize a full joined label even after the time
+ * segment moved first, so on compact the pill rotates one segment per tick —
+ * everything stays readable without scrolling. Wide layouts keep the full
+ * ` · ` join. Plain function (called conditionally from the component); the
+ * caller owns the rotate timer.
+ */
+function pillLabel(data: SyncResult, compact: boolean, rotate: number): string {
+  const segments = pillSegments(data, compact);
+  if (!compact || segments.length <= 1) return segments.join(" · ");
+  return segments[rotate % segments.length] ?? segments[0];
 }
 
 export function contributePills(client: PluginClientContext, placement: PanelPlacement): () => Promise<void> {
@@ -67,9 +95,17 @@ export function contributePills(client: PluginClientContext, placement: PanelPla
     function UsageIcon(props: PluginButtonIconProps) {
       useEffect(() => placement.observe(agent.id, props.layout.compact), [props.layout.compact]);
       const { data, error } = useLedger(agent.id);
+      const [rotate, setRotate] = useState(0);
+      // Rotate on compact only: wide layouts show the full joined label, and
+      // an unmounted icon has no timer — rotating only while visible.
       useEffect(() => {
-        handle.update({ label: error ? "Usage unavailable" : data ? pillLabel(data) : "…" });
-      }, [data, error]);
+        if (!props.layout.compact) return;
+        const timer = setInterval(() => setRotate((n) => n + 1), 5000);
+        return () => clearInterval(timer);
+      }, [props.layout.compact]);
+      useEffect(() => {
+        handle.update({ label: error ? "Usage unavailable" : data ? pillLabel(data, props.layout.compact, rotate) : "…" });
+      }, [data, error, props.layout.compact, rotate]);
       return <Icon name={data?.inFlight ? "Activity" : "Coins"} size={props.size} color={props.color} />;
     }
     handle = client.addComposerPill({
