@@ -5,11 +5,27 @@ import { useLedger } from "./data.ts";
 import { useEffect } from "react";
 import { subscribeAgents } from "../shared/agents.ts";
 import { ledgerEnsure, type SyncResult } from "../shared/ledger.ts";
-import { fmtCost, fmtTokens } from "./ui.tsx";
+import { fmtCost, fmtTime, fmtTokens } from "./ui.tsx";
 
 import type { PanelPlacement } from "./layout.ts";
 
-function pillLabel({ summary, inFlight, ctx }: SyncResult): string {
+/**
+ * Compact elapsed time for the pill. The label is refreshed by the query
+ * interval (3s while a turn runs), so this reads as a coarse "running 1m"
+ * rather than a ticking stopwatch — enough to see that a scheduled run is
+ * still going.
+ */
+function fmtElapsed(startedAt: string): string {
+  const ms = Date.now() - Date.parse(startedAt);
+  if (!Number.isFinite(ms) || ms < 0) return "–";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h`;
+}
+
+function pillLabel({ summary, inFlight, ctx, records }: SyncResult): string {
   const combinedCost = summary.effectiveCostUsd === null && inFlight?.effectiveCostUsd == null
     ? null
     : (summary.effectiveCostUsd ?? 0) + (inFlight?.effectiveCostUsd ?? 0);
@@ -21,6 +37,11 @@ function pillLabel({ summary, inFlight, ctx }: SyncResult): string {
   const liveCtx = inFlight?.ctxUsed != null && inFlight.ctxMax != null
     ? { used: inFlight.ctxUsed, max: inFlight.ctxMax } : ctx;
   if (liveCtx && liveCtx.max > 0) parts.push(`ctx ${Math.round(liveCtx.used / liveCtx.max * 100)}%`);
+  // Absolute wall-clock end time, not a relative age: it stays correct without
+  // a timer, so a glance after hours away still says when the last turn ended.
+  // Granularity note: the ledger tracks turns, not individual tool calls.
+  if (inFlight) parts.push(`running ${fmtElapsed(inFlight.startedAt)}`);
+  else if (records[0]) parts.push(`done ${fmtTime(records[0].endedAt)}`);
   return parts.join(" · ");
 }
 
