@@ -6,8 +6,22 @@ import { useEffect } from "react";
 import { subscribeAgents } from "../shared/agents.ts";
 import { ledgerEnsure, type SyncResult } from "../shared/ledger.ts";
 import { fmtCost, fmtTime, fmtTokens } from "./ui.tsx";
+import { cacheRatio } from "../shared/pricing.ts";
 
 import type { PanelPlacement } from "./layout.ts";
+
+/**
+ * Compact session-wide cache hit rate, e.g. "hit 97%". Session totals, not the
+ * last turn: per-turn figures sit at 99% almost always, so only the session
+ * number shows whether the cache is actually paying off. `input`/`cached` in
+ * the summary are already normalized to fresh-token form by the server.
+ */
+function fmtHit(summary: { input: number; cached: number; cacheWrite?: number }): string | null {
+  const ratio = cacheRatio(summary.input, summary.cached, summary.cacheWrite);
+  if (ratio === null) return null;
+  const pct = Math.round(ratio * 100);
+  return `hit ${pct}%`;
+}
 
 /**
  * Compact elapsed time for the pill. The label is refreshed by the query
@@ -33,7 +47,11 @@ function pillLabel({ summary, inFlight, ctx, records }: SyncResult): string {
   // FIRST in the label on purpose: narrow layouts (phones) ellipsize the tail,
   // and the timestamp is the segment you do not want to lose.
   if (inFlight) parts.push(`running ${fmtElapsed(inFlight.startedAt)}`);
-  else if (records[0]) parts.push(`done ${fmtTime(records[0].endedAt)}`);
+  else if (records[0]) parts.push(`@${fmtTime(records[0].endedAt)}`);
+  // Session hit rate right after the time: together these are the two figures
+  // worth keeping when a narrow pill truncates everything past them.
+  const hit = fmtHit(summary);
+  if (hit) parts.push(hit);
   const combinedCost = summary.effectiveCostUsd === null && inFlight?.effectiveCostUsd == null
     ? null
     : (summary.effectiveCostUsd ?? 0) + (inFlight?.effectiveCostUsd ?? 0);

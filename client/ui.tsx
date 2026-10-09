@@ -1,6 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Text, View } from "react-native";
 import type { Summary, TurnRecord } from "../shared/ledger.ts";
+import { cacheRatio } from "../shared/pricing.ts";
 
 export function fmtTokens(value: number | null): string {
   if (value === null) return "–";
@@ -115,11 +116,16 @@ export function SummaryRow({ summary, theme, dense }: { summary: Summary; theme:
   const cost = fmtCost(summary.effectiveCostUsd);
   const costValue = cost ? `${summary.estimatedTurns > 0 ? "≈" : ""}${cost}` : null;
   const costLabel = summary.unpricedTurns > 0 ? `cost · ${summary.unpricedTurns} unknown` : summary.estimatedTurns > 0 ? "cost · estimated" : "cost";
+  // Session-wide hit rate. The per-turn figure already sits under the CACHE
+  // cell, but session totals are what show whether caching actually paid off;
+  // summary.input is normalized fresh tokens, so the ratio is exact.
+  const hit = cacheRatio(summary.input, summary.cached, summary.cacheWrite);
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: dense ? 10 : 16 }}>
       <Stat label="turns" value={String(summary.turns)} theme={theme} dense={dense} />
       <Stat label="input" value={fmtTokens(summary.input)} theme={theme} dense={dense} />
       <Stat label="cache" value={fmtTokens(summary.cached)} theme={theme} dense={dense} />
+      {hit !== null ? <Stat label="hit" value={`${Math.round(hit * 100)}%`} theme={theme} dense={dense} /> : null}
       {summary.cacheWrite != null ? <Stat label="cache write" value={fmtTokens(summary.cacheWrite)} theme={theme} dense={dense} /> : null}
       <Stat label="output" value={fmtTokens(summary.output)} theme={theme} dense={dense} />
       {costValue ? <Stat label={costLabel} value={costValue} theme={theme} dense={dense} /> : null}
